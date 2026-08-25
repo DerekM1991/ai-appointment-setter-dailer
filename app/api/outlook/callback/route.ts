@@ -35,11 +35,11 @@ export async function GET(request: Request) {
       entityId: "microsoft",
       details: { accountEmail: connected.accountEmail },
     });
-    return Response.redirect(`${baseUrl}/?outlook=connected`, 302);
+    return Response.redirect(`${baseUrl}/app?outlook=connected`, 302);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return Response.redirect(
-      `${baseUrl}/?outlook_error=${encodeURIComponent(message.slice(0, 180))}`,
+      `${baseUrl}/app?outlook_error=${encodeURIComponent(message.slice(0, 180))}`,
       302,
     );
   }

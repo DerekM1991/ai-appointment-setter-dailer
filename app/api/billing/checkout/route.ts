@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as { plan?: string };
     if (payload.plan !== "starter" && payload.plan !== "growth" && payload.plan !== "pro") throw new Error("Choose a valid subscription plan.");
     const baseUrl = normalizedBaseUrl(getRuntimeEnv(), request);
-    const url = await createSubscriptionCheckout({ db: getDb(), runtime: getRuntimeEnv(), organizationId: auth.organizationId, organizationName: auth.organizationName, email: auth.email, plan: payload.plan, returnUrl: `${baseUrl}/?section=billing` });
+    const url = await createSubscriptionCheckout({ db: getDb(), runtime: getRuntimeEnv(), organizationId: auth.organizationId, organizationName: auth.organizationName, email: auth.email, plan: payload.plan, returnUrl: `${baseUrl}/app?section=billing` });
     return Response.json({ url });
   } catch (error) {
     return errorResponse(error, 400);

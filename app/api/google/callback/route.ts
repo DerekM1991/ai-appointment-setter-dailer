@@ -19,6 +19,6 @@ export async function GET(request: Request) {
     const db = getDb();
     const connected = await completeGoogleAuthorization({ db, runtime, code, state, redirectUri: `${baseUrl}/api/google/callback`, userEmail: auth.email, userId: auth.userId, organizationId: auth.organizationId });
     await writeAuditEvent(db, { organizationId: auth.organizationId, actor: auth.email, eventType: "google_calendar_connected", entityType: "integration", entityId: "google", details: { accountEmail: connected.accountEmail } });
-    return Response.redirect(`${baseUrl}/?google=connected`, 302);
-  } catch (error) { return Response.redirect(`${baseUrl}/?google_error=${encodeURIComponent((error instanceof Error ? error.message : String(error)).slice(0, 180))}`, 302); }
+    return Response.redirect(`${baseUrl}/app?google=connected`, 302);
+  } catch (error) { return Response.redirect(`${baseUrl}/app?google_error=${encodeURIComponent((error instanceof Error ? error.message : String(error)).slice(0, 180))}`, 302); }
 }

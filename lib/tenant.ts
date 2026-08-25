@@ -38,6 +38,10 @@ export type TenantContext = {
   plan: PlanDefinition;
   subscriptionStatus: string;
   trialEndsAt: number | null;
+  billingOverrideType: "none" | "complimentary" | "discount";
+  billingDiscountPercent: number;
+  billingOverrideStartsAt: number | null;
+  billingOverrideEndsAt: number | null;
 };
 
 export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promise<TenantContext> {
@@ -74,6 +78,10 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
       subscriptionStatus: organizations.subscriptionStatus,
       trialEndsAt: organizations.trialEndsAt,
       organizationStatus: organizations.status,
+      billingOverrideType: organizations.billingOverrideType,
+      billingDiscountPercent: organizations.billingDiscountPercent,
+      billingOverrideStartsAt: organizations.billingOverrideStartsAt,
+      billingOverrideEndsAt: organizations.billingOverrideEndsAt,
     })
     .from(memberships)
     .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
@@ -112,6 +120,10 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
         subscriptionStatus: organizations.subscriptionStatus,
       trialEndsAt: organizations.trialEndsAt,
       organizationStatus: organizations.status,
+      billingOverrideType: organizations.billingOverrideType,
+      billingDiscountPercent: organizations.billingDiscountPercent,
+      billingOverrideStartsAt: organizations.billingOverrideStartsAt,
+      billingOverrideEndsAt: organizations.billingOverrideEndsAt,
       })
       .from(memberships)
       .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
@@ -132,10 +144,22 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
     plan: planFor(membership.planKey),
     subscriptionStatus: membership.subscriptionStatus,
     trialEndsAt: membership.trialEndsAt,
+    billingOverrideType: membership.billingOverrideType,
+    billingDiscountPercent: membership.billingDiscountPercent,
+    billingOverrideStartsAt: membership.billingOverrideStartsAt,
+    billingOverrideEndsAt: membership.billingOverrideEndsAt,
   };
 }
 
+export function hasActiveBillingOverride(context: Pick<TenantContext, "billingOverrideType" | "billingOverrideStartsAt" | "billingOverrideEndsAt">, now = Date.now()): boolean {
+  if (context.billingOverrideType === "none") return false;
+  if (context.billingOverrideStartsAt && context.billingOverrideStartsAt > now) return false;
+  if (context.billingOverrideEndsAt && context.billingOverrideEndsAt <= now) return false;
+  return true;
+}
+
 export function hasPermission(context: TenantContext, permission: Permission): boolean {
+  if (context.platformRole === "super_admin") return true;
   return ROLE_PERMISSIONS[context.role].has(permission);
 }
 

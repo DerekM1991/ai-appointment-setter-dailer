@@ -54,3 +54,21 @@ test("SaaS routes enforce tenant, role, plan, and billing controls", async () =>
   assert.match(stripe, /verifyStripeWebhook/);
   assert.match(security, /sec-fetch-site/);
 });
+
+test("public website, account entry, and platform grants are present", async () => {
+  const [marketing, dashboard, admin, stripe, migration] = await Promise.all([
+    readFile(new URL("../app/components/marketing-site.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/dialer-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/workspaces/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/stripe.ts", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0004_new_imperial_guard.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(marketing, /Features.*Pricing.*Security.*Contact/s);
+  assert.match(marketing, /Log in/);
+  assert.match(marketing, /Sign up free/);
+  assert.match(dashboard, /Platform administration/);
+  assert.match(dashboard, /Complimentary.*Discounted/s);
+  assert.match(admin, /billingOverrideEndsAt/);
+  assert.match(stripe, /discounts\[0\]\[coupon\]/);
+  assert.match(migration, /billing_override_type/);
+});

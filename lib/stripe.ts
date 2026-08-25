@@ -29,7 +29,7 @@ export async function createSubscriptionCheckout(input: {
     customerId = customer.id;
     await input.db.update(organizations).set({ stripeCustomerId: customerId, updatedAt: Date.now() }).where(eq(organizations.id, input.organizationId));
   }
-  const session = await stripeRequest<{ url?: string }>(secret, "/v1/checkout/sessions", {
+  const checkoutValues: Record<string, string> = {
     mode: "subscription",
     customer: customerId,
     "line_items[0][price]": price,
@@ -40,8 +40,28 @@ export async function createSubscriptionCheckout(input: {
     "metadata[plan_key]": input.plan,
     "subscription_data[metadata][organization_id]": input.organizationId,
     "subscription_data[metadata][plan_key]": input.plan,
-    allow_promotion_codes: "true",
-  });
+  };
+  const now = Date.now();
+  const discountActive = organization.billingOverrideType === "discount" && organization.billingDiscountPercent > 0 && (!organization.billingOverrideStartsAt || organization.billingOverrideStartsAt <= now) && (!organization.billingOverrideEndsAt || organization.billingOverrideEndsAt > now);
+  if (discountActive) {
+    const couponValues: Record<string, string> = {
+      percent_off: String(organization.billingDiscountPercent),
+      name: `${organization.billingDiscountPercent}% platform access grant`,
+      max_redemptions: "1",
+      "metadata[organization_id]": input.organizationId,
+    };
+    if (organization.billingOverrideEndsAt) {
+      couponValues.duration = "repeating";
+      couponValues.duration_in_months = String(Math.max(1, Math.ceil((organization.billingOverrideEndsAt - now) / (30 * 86_400_000))));
+    } else {
+      couponValues.duration = "forever";
+    }
+    const coupon = await stripeRequest<{ id: string }>(secret, "/v1/coupons", couponValues);
+    checkoutValues["discounts[0][coupon]"] = coupon.id;
+  } else {
+    checkoutValues.allow_promotion_codes = "true";
+  }
+  const session = await stripeRequest<{ url?: string }>(secret, "/v1/checkout/sessions", checkoutValues);
   if (!session.url) throw new Error("Stripe did not return a checkout URL.");
   return session.url;
 }
