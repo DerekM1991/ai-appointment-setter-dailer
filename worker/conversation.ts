@@ -49,6 +49,9 @@ type Session = {
     timezone: string;
   };
   campaign: {
+    sellerName: string;
+    productName: string;
+    agentName: string;
     productSummary: string;
     objective: string;
     meetingDurationMinutes: number;
@@ -162,6 +165,9 @@ async function initializeSession(
       timezone: leads.timezone,
       internalDnc: leads.internalDnc,
       campaignId: campaigns.id,
+      sellerName: campaigns.sellerName,
+      productName: campaigns.productName,
+      agentName: campaigns.agentName,
       productSummary: campaigns.productSummary,
       objective: campaigns.objective,
       meetingDurationMinutes: campaigns.meetingDurationMinutes,
@@ -200,6 +206,9 @@ async function initializeSession(
       timezone: record.timezone,
     },
     campaign: {
+      sellerName: record.sellerName,
+      productName: record.productName,
+      agentName: record.agentName,
       productSummary: record.productSummary,
       objective: record.objective,
       meetingDurationMinutes: record.meetingDurationMinutes,
@@ -244,7 +253,7 @@ async function handleProspectTurn(session: Session, utterance: string) {
     });
     const reply = session.slots.length
       ? `I have ${humanSlotList(session.slots)}. Which one works best for you?`
-      : "I don't see an open time in the next several business days. Someone from ODIN can follow up to coordinate manually.";
+      : `I don't see an open time in the next several business days. Someone from ${session.campaign.sellerName} can follow up to coordinate manually.`;
     await appendAssistant(session, reply);
     sendText(session.socket, reply);
     return;
@@ -295,7 +304,7 @@ async function attemptBooking(
     return;
   }
   const appointmentId = crypto.randomUUID();
-  const subject = `ODIN Asset Manager discovery — ${session.lead.company || `${session.lead.firstName} ${session.lead.lastName}`}`;
+  const subject = `${session.campaign.productName} discovery — ${session.lead.company || `${session.lead.firstName} ${session.lead.lastName}`}`;
   const now = Date.now();
   await session.db.insert(appointments).values({
     id: appointmentId,
@@ -321,7 +330,7 @@ async function attemptBooking(
       attendeeEmail: email,
       attendeeName: `${session.lead.firstName} ${session.lead.lastName}`,
       notes:
-        "Booked by the disclosed ODIN AI appointment assistant after the prospect explicitly confirmed the time and email address.",
+        `Booked by ${session.campaign.agentName}, the disclosed AI appointment assistant for ${session.campaign.sellerName}, after the prospect explicitly confirmed the time and email address.`,
     });
     await session.db
       .update(appointments)
@@ -361,7 +370,7 @@ async function attemptBooking(
       .update(appointments)
       .set({ status: "failed", updatedAt: Date.now() })
       .where(eq(appointments.id, appointmentId));
-    const reply = "I couldn't create the invitation just now, so I won't claim that it's booked. Someone from ODIN can follow up to coordinate.";
+    const reply = `I couldn't create the invitation just now, so I won't claim that it's booked. Someone from ${session.campaign.sellerName} can follow up to coordinate.`;
     await appendAssistant(session, reply);
     sendText(session.socket, reply);
     scheduleEnd(session.socket, reply, "calendar_error");

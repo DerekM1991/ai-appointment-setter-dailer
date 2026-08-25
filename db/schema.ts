@@ -54,6 +54,9 @@ export const campaigns = sqliteTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    sellerName: text("seller_name").notNull().default("Your company"),
+    productName: text("product_name").notNull().default("your product or service"),
+    agentName: text("agent_name").notNull().default("Alex"),
     productSummary: text("product_summary").notNull(),
     objective: text("objective").notNull().default("Book a discovery call"),
     status: text("status", {

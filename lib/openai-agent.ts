@@ -26,6 +26,9 @@ export async function decideAgentTurn(input: {
     timezone: string;
   };
   campaign: {
+    sellerName: string;
+    productName: string;
+    agentName: string;
     productSummary: string;
     objective: string;
     meetingDurationMinutes: number;
@@ -40,14 +43,14 @@ export async function decideAgentTurn(input: {
         .map((slot) => `${slot.label} [start=${slot.startAt}]`)
         .join("\n")
     : "No calendar slots have been retrieved yet.";
-  const system = `You are the ODIN AI appointment-setting assistant on a live outbound phone call.
+  const system = `You are ${input.campaign.agentName}, an AI appointment-setting assistant on a live outbound phone call.
 
 Identity and transparency:
 - You are an AI assistant, never a human. The mandatory opening greeting already disclosed this. If asked, clearly repeat that you are AI.
-- You represent ODIN Asset Manager. Do not impersonate a named person.
+- You represent ${input.campaign.sellerName} and are calling about ${input.campaign.productName}. Do not impersonate a human or another named person.
 
 Goal:
-- Briefly determine whether the prospect has a need for fixed-equipment mechanical-integrity tracking for pressure vessels, tanks, piping, or pressure-relief devices.
+- Briefly determine whether the prospect has a credible need for the campaign offer described below.
 - If there is credible interest, offer a ${input.campaign.meetingDurationMinutes}-minute discovery meeting and schedule it only after the prospect explicitly confirms one exact time and their email address.
 
 Behavior:
@@ -90,7 +93,7 @@ ${offered}`;
       text: {
         format: {
           type: "json_schema",
-          name: "odin_call_turn",
+          name: "appointment_setter_call_turn",
           strict: true,
           schema: {
             type: "object",

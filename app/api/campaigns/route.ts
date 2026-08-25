@@ -20,6 +20,9 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json()) as {
       name?: string;
+      sellerName?: string;
+      productName?: string;
+      agentName?: string;
       productSummary?: string;
       objective?: string;
       maxConcurrent?: number;
@@ -27,8 +30,14 @@ export async function POST(request: Request) {
       meetingDurationMinutes?: number;
     };
     const name = payload.name?.trim();
+    const sellerName = payload.sellerName?.trim();
+    const productName = payload.productName?.trim();
+    const agentName = payload.agentName?.trim();
     const productSummary = payload.productSummary?.trim();
     if (!name || name.length > 100) throw new Error("Enter a campaign name under 100 characters.");
+    if (!sellerName || sellerName.length > 100) throw new Error("Enter the seller or business name under 100 characters.");
+    if (!productName || productName.length > 120) throw new Error("Enter the product or offer name under 120 characters.");
+    if (!agentName || agentName.length > 40) throw new Error("Enter an agent name under 40 characters.");
     if (!productSummary || productSummary.length < 40 || productSummary.length > 2_000) {
       throw new Error("Enter a factual product brief between 40 and 2,000 characters.");
     }
@@ -42,6 +51,9 @@ export async function POST(request: Request) {
     await db.insert(campaigns).values({
       id,
       name,
+      sellerName,
+      productName,
+      agentName,
       productSummary,
       objective: payload.objective?.trim() || "Book a discovery call",
       status: "draft",

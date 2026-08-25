@@ -3,23 +3,23 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://odin-ai-dialer.derekmerf.chatgpt.site"),
-  title: "ODIN AI Appointment Dialer",
+  title: "AI Appointment Setter",
   description:
-    "A compliance-first AI calling and appointment scheduling workspace for ODIN Asset Manager.",
+    "A reusable, compliance-first AI calling and Outlook appointment scheduling workspace.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
   },
   openGraph: {
-    title: "ODIN AI Appointment Dialer",
+    title: "AI Appointment Setter",
     description: "Compliance-first calling. Outlook-ready scheduling.",
-    images: [{ url: "/og.png", width: 1731, height: 909 }],
+    images: [{ url: "/og-generic.png", width: 1731, height: 909 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "ODIN AI Appointment Dialer",
+    title: "AI Appointment Setter",
     description: "Compliance-first calling. Outlook-ready scheduling.",
-    images: ["/og.png"],
+    images: ["/og-generic.png"],
   },
 };
 

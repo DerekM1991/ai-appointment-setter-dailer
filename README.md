@@ -1,12 +1,13 @@
-# ODIN AI Appointment Dialer
+# AI Appointment Setter
 
-A private, compliance-gated outbound calling workspace for consented prospects. It imports `.xlsx` or `.csv` workbooks, runs up to 20 simultaneous Twilio voice sessions, uses an explicitly disclosed OpenAI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook.
+A reusable, compliance-gated outbound calling workspace for consented prospects. It imports `.xlsx` or `.csv` workbooks, runs up to 20 simultaneous Twilio voice sessions, uses an explicitly disclosed OpenAI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook. Each campaign independently configures the seller, product or offer, AI agent name, factual product brief, objective, and meeting length, so the same deployment can support multiple businesses and sales pivots without code changes.
 
 > This project intentionally does not provide an “upload and blast” mode. A prospect must have documented prior express written consent, current DNC-screening evidence, a valid phone number, and a known IANA timezone before the number can enter Twilio.
 
 ## What is implemented
 
 - Authenticated control-room dashboard with live campaign, call, appointment, integration, and audit views
+- Campaign-level seller, product, agent identity, product brief, objective, concurrency, and appointment settings
 - Browser-side Excel/CSV parsing with normalized field aliases and server-side revalidation
 - D1 persistence for prospects, campaigns, queues, calls, transcripts, meetings, encrypted OAuth tokens, settings, and audit events
 - Maximum 20 active calls per campaign, with the provider’s Calls API queue handling account-level calls-per-second limits

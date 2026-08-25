@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
-test("build emits a deployable worker and ODIN control room", async () => {
+test("build emits a deployable worker and appointment-setting control room", async () => {
   const worker = new URL("../dist/server/index.js", import.meta.url);
   const workerStat = await stat(worker);
   assert.ok(workerStat.size > 1_000);
@@ -10,7 +10,7 @@ test("build emits a deployable worker and ODIN control room", async () => {
     new URL("../app/components/dialer-dashboard.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(dashboard, /ODIN/);
+  assert.match(dashboard, /Appointment Setter/i);
   assert.match(dashboard, /Compliance gate active/);
   assert.match(dashboard, /Import Excel or CSV/);
   assert.match(dashboard, /Start protected calling/);

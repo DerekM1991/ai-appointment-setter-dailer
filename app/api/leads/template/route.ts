@@ -25,7 +25,7 @@ export async function GET() {
   return new Response(`${header}\n`, {
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": 'attachment; filename="odin-prospect-import-template.csv"',
+      "content-disposition": 'attachment; filename="prospect-import-template.csv"',
       "cache-control": "no-store",
     },
   });

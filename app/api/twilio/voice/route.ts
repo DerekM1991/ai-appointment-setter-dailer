@@ -20,6 +20,9 @@ export async function POST(request: Request) {
       leadId: leads.id,
       campaignId: campaigns.id,
       firstName: leads.firstName,
+      sellerName: campaigns.sellerName,
+      productName: campaigns.productName,
+      agentName: campaigns.agentName,
     })
     .from(calls)
     .innerJoin(leads, eq(calls.leadId, leads.id))
@@ -29,7 +32,7 @@ export async function POST(request: Request) {
   if (!record || (record.twilioCallSid && record.twilioCallSid !== form.get("CallSid"))) {
     return twiml("<Hangup/>");
   }
-  const greeting = `Hi ${record.firstName}. I'm ODIN, an AI assistant calling on behalf of ODIN Asset Manager. This is a sales call about fixed-equipment integrity software. Is now a bad time?`;
+  const greeting = `Hi ${record.firstName}. I'm ${record.agentName}, an AI assistant calling on behalf of ${record.sellerName}. This is a sales call about ${record.productName}. Is now a bad time?`;
   const now = Date.now();
   await db
     .update(calls)
@@ -48,6 +51,6 @@ export async function POST(request: Request) {
   const socketUrl = baseUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
   const connectAction = `${baseUrl}/api/twilio/connect-action?callId=${encodeURIComponent(callId)}`;
   return twiml(
-    `<Connect action="${xmlEscape(connectAction)}"><ConversationRelay url="${xmlEscape(`${socketUrl}/api/twilio/conversation`)}" welcomeGreeting="${xmlEscape(greeting)}" welcomeGreetingInterruptible="speech" language="en-US" interruptible="speech" interruptSensitivity="medium" reportInputDuringAgentSpeech="speech" ignoreBackchannel="true" hints="ODIN,mechanical integrity,pressure vessels,pressure relief valves,fixed equipment" events="tokens-played speaker-events"><Parameter name="callId" value="${xmlEscape(callId)}"/><Parameter name="leadId" value="${xmlEscape(record.leadId)}"/><Parameter name="campaignId" value="${xmlEscape(record.campaignId)}"/></ConversationRelay></Connect>`,
+    `<Connect action="${xmlEscape(connectAction)}"><ConversationRelay url="${xmlEscape(`${socketUrl}/api/twilio/conversation`)}" welcomeGreeting="${xmlEscape(greeting)}" welcomeGreetingInterruptible="speech" language="en-US" interruptible="speech" interruptSensitivity="medium" reportInputDuringAgentSpeech="speech" ignoreBackchannel="true" hints="${xmlEscape(`${record.sellerName},${record.productName}`)}" events="tokens-played speaker-events"><Parameter name="callId" value="${xmlEscape(callId)}"/><Parameter name="leadId" value="${xmlEscape(record.leadId)}"/><Parameter name="campaignId" value="${xmlEscape(record.campaignId)}"/></ConversationRelay></Connect>`,
   );
 }
