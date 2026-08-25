@@ -53,7 +53,6 @@ export async function PATCH(request: Request) {
       updates.billingOverrideStartsAt = payload.billingOverrideType === "none" ? null : startsAt;
       updates.billingOverrideEndsAt = payload.billingOverrideType === "none" ? null : endsAt;
       updates.billingOverrideNote = payload.billingOverrideType === "none" ? null : payload.billingOverrideNote?.trim().slice(0, 500) || null;
-      if (payload.billingOverrideType === "complimentary") updates.subscriptionStatus = "active";
     }
     await db.update(organizations).set(updates).where(eq(organizations.id, payload.organizationId));
     await writeAuditEvent(db, { organizationId: payload.organizationId, actor: auth.email, eventType: "platform_workspace_updated", entityType: "organization", entityId: payload.organizationId, details: updates });
