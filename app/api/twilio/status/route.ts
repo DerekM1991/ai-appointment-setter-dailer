@@ -7,7 +7,7 @@ import { validateTwilioRequest } from "@/lib/twilio";
 import { resolveTwilioCredentials } from "@/lib/integrations";
 
 const terminal = new Set(["completed", "busy", "no-answer", "canceled", "failed"]);
-const activeStatuses = ["queued", "initiated", "ringing", "answered", "in-progress"];
+const activeStatuses = ["creating", "queued", "initiated", "ringing", "answered", "in-progress"];
 
 export async function POST(request: Request) {
   const runtime = getRuntimeEnv();
