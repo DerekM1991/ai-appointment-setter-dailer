@@ -6,6 +6,7 @@ type Db = ReturnType<typeof getDb>;
 export async function writeAuditEvent(
   db: Db,
   input: {
+    organizationId?: string;
     actor: string;
     eventType: string;
     entityType?: string;
@@ -15,6 +16,7 @@ export async function writeAuditEvent(
 ) {
   await db.insert(auditEvents).values({
     id: crypto.randomUUID(),
+    organizationId: input.organizationId ?? "legacy",
     actor: input.actor,
     eventType: input.eventType,
     entityType: input.entityType ?? null,

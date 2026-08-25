@@ -13,6 +13,13 @@ export type RuntimeEnv = {
   MICROSOFT_CLIENT_ID?: string;
   MICROSOFT_CLIENT_SECRET?: string;
   MICROSOFT_TENANT_ID?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_STARTER?: string;
+  STRIPE_PRICE_GROWTH?: string;
+  STRIPE_PRICE_PRO?: string;
 };
 
 export function getRuntimeEnv(): RuntimeEnv {
@@ -38,6 +45,18 @@ export function integrationReadiness(runtime: RuntimeEnv) {
       runtime.MICROSOFT_CLIENT_ID &&
         runtime.MICROSOFT_CLIENT_SECRET &&
         runtime.APP_ENCRYPTION_KEY,
+    ),
+    google: Boolean(
+      runtime.GOOGLE_CLIENT_ID &&
+        runtime.GOOGLE_CLIENT_SECRET &&
+        runtime.APP_ENCRYPTION_KEY,
+    ),
+    stripe: Boolean(
+      runtime.STRIPE_SECRET_KEY &&
+        runtime.STRIPE_WEBHOOK_SECRET &&
+        runtime.STRIPE_PRICE_STARTER &&
+        runtime.STRIPE_PRICE_GROWTH &&
+        runtime.STRIPE_PRICE_PRO,
     ),
     baseUrl: Boolean(runtime.APP_BASE_URL),
   };

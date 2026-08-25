@@ -12,6 +12,8 @@ export async function GET(request: Request) {
       runtime,
       redirectUri,
       userEmail: auth.email,
+      userId: auth.userId,
+      organizationId: auth.organizationId,
     });
     return Response.redirect(url, 302);
   } catch (error) {

@@ -1,8 +1,9 @@
 import { getChatGPTUser } from "@/app/chatgpt-auth";
-import { getRuntimeEnv } from "./env";
+import { getDb } from "@/db";
+import { ensureTenantContext, type TenantContext } from "./tenant";
 
 export async function getAuthorizedApiUser(): Promise<
-  | { ok: true; email: string; displayName: string }
+  | ({ ok: true } & TenantContext)
   | { ok: false; response: Response }
 > {
   const user = await getChatGPTUser();
@@ -12,14 +13,17 @@ export async function getAuthorizedApiUser(): Promise<
       response: Response.json({ error: "Authentication required." }, { status: 401 }),
     };
   }
-  const owner = getRuntimeEnv().APP_OWNER_EMAIL?.trim().toLowerCase();
-  if (owner && owner !== user.email.toLowerCase()) {
+  try {
+    return { ok: true, ...(await ensureTenantContext(getDb(), user)) };
+  } catch (error) {
     return {
       ok: false,
-      response: Response.json({ error: "This workspace is restricted to its owner." }, { status: 403 }),
+      response: Response.json(
+        { error: error instanceof Error ? error.message : "Account access denied." },
+        { status: 403 },
+      ),
     };
   }
-  return { ok: true, email: user.email, displayName: user.displayName };
 }
 
 export function errorResponse(error: unknown, status = 400): Response {

@@ -16,16 +16,15 @@ import {
   isValidEmail,
 } from "@/lib/compliance";
 import type { RuntimeEnv } from "@/lib/env";
+import { resolveOpenAICredentials, resolveTwilioCredentials } from "@/lib/integrations";
 import {
   decideAgentTurn,
   type TranscriptTurn,
 } from "@/lib/openai-agent";
-import {
-  createOutlookAppointment,
-  getAvailableSlots,
-  type AvailableSlot,
-} from "@/lib/outlook";
+import { createCalendarAppointment, getAvailableSlots } from "@/lib/calendar";
+import type { AvailableSlot } from "@/lib/outlook";
 import { validateTwilioRequest } from "@/lib/twilio";
+import { incrementUsage } from "@/lib/usage";
 
 type Db = ReturnType<typeof getDb>;
 type WorkerSocket = WebSocket & { accept(): void };
@@ -38,6 +37,8 @@ type Session = {
   callId: string;
   campaignId: string;
   leadId: string;
+  organizationId: string;
+  calendarUserId: string;
   transcript: TranscriptTurn[];
   slots: AvailableSlot[];
   lead: {
@@ -74,7 +75,11 @@ export async function handleConversationUpgrade(
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return new Response("WebSocket upgrade required.", { status: 426 });
   }
-  if (!(await validateTwilioRequest(request, runtime.TWILIO_AUTH_TOKEN))) {
+  const db = drizzle(runtime.DB, { schema }) as unknown as Db;
+  const callId = new URL(request.url).searchParams.get("callId");
+  const [call] = callId ? await db.select({ organizationId: calls.organizationId }).from(calls).where(eq(calls.id, callId)).limit(1) : [];
+  const twilio = call ? await resolveTwilioCredentials(db, runtime, call.organizationId).catch(() => null) : null;
+  if (!(await validateTwilioRequest(request, twilio?.authToken))) {
     return new Response("Invalid Twilio signature.", { status: 403 });
   }
   const Pair = (globalThis as unknown as { WebSocketPair: new () => SocketPair })
@@ -83,7 +88,6 @@ export async function handleConversationUpgrade(
   const client = pair[0];
   const server = pair[1];
   server.accept();
-  const db = drizzle(runtime.DB, { schema }) as unknown as Db;
   let session: Session | null = null;
   let messageQueue = Promise.resolve();
 
@@ -154,6 +158,7 @@ async function initializeSession(
   const [record] = await db
     .select({
       callId: calls.id,
+      organizationId: calls.organizationId,
       twilioCallSid: calls.twilioCallSid,
       transcriptJson: calls.transcriptJson,
       leadId: leads.id,
@@ -165,6 +170,7 @@ async function initializeSession(
       timezone: leads.timezone,
       internalDnc: leads.internalDnc,
       campaignId: campaigns.id,
+      calendarUserId: campaigns.createdByUserId,
       sellerName: campaigns.sellerName,
       productName: campaigns.productName,
       agentName: campaigns.agentName,
@@ -188,13 +194,20 @@ async function initializeSession(
     sendEnd(socket, "call_not_authorized");
     return null;
   }
+  if (!record.calendarUserId) {
+    sendEnd(socket, "calendar_owner_missing");
+    return null;
+  }
+  const openai = await resolveOpenAICredentials(db, runtime, record.organizationId);
   return {
     db,
-    runtime,
+    runtime: { ...runtime, OPENAI_API_KEY: openai.apiKey, OPENAI_MODEL: openai.model },
     socket,
     callId,
     leadId,
     campaignId,
+    organizationId: record.organizationId,
+    calendarUserId: record.calendarUserId,
     transcript: parseTranscript(record.transcriptJson),
     slots: [],
     lead: {
@@ -219,6 +232,7 @@ async function initializeSession(
 async function handleProspectTurn(session: Session, utterance: string) {
   if (!utterance) return;
   session.transcript.push({ role: "user", text: utterance, at: Date.now() });
+  await incrementUsage(session.db, session.organizationId, "aiTurns");
   await persistTranscript(session);
   if (detectsOptOut(utterance)) {
     await enforceOptOut(session, "prospect_phrase");
@@ -247,6 +261,8 @@ async function handleProspectTurn(session: Session, utterance: string) {
     session.slots = await getAvailableSlots({
       db: session.db,
       runtime: session.runtime,
+      organizationId: session.organizationId,
+      userId: session.calendarUserId,
       timezone: session.lead.timezone,
       durationMinutes: session.campaign.meetingDurationMinutes,
       count: 3,
@@ -298,7 +314,7 @@ async function attemptBooking(
     return;
   }
   if (!isValidEmail(email)) {
-    const reply = "What email address should I use for the Outlook invitation?";
+    const reply = "What email address should I use for the calendar invitation?";
     await appendAssistant(session, reply);
     sendText(session.socket, reply);
     return;
@@ -308,6 +324,7 @@ async function attemptBooking(
   const now = Date.now();
   await session.db.insert(appointments).values({
     id: appointmentId,
+    organizationId: session.organizationId,
     callId: session.callId,
     leadId: session.leadId,
     subject,
@@ -320,9 +337,11 @@ async function attemptBooking(
     updatedAt: now,
   });
   try {
-    const event = await createOutlookAppointment({
+    const event = await createCalendarAppointment({
       db: session.db,
       runtime: session.runtime,
+      organizationId: session.organizationId,
+      userId: session.calendarUserId,
       appointmentId,
       subject,
       startAt: slot.startAt,
@@ -355,13 +374,14 @@ async function attemptBooking(
       })
       .where(eq(calls.id, session.callId));
     await writeAuditEvent(session.db, {
+      organizationId: session.organizationId,
       actor: "system:agent",
       eventType: "appointment_booked",
       entityType: "appointment",
       entityId: appointmentId,
       details: { callId: session.callId, startAt: slot.startAt },
     });
-    const reply = `You're all set for ${slot.label}. I sent the Outlook invitation to ${speakableEmail(email)}. Thanks for your time.`;
+    const reply = `You're all set for ${slot.label}. I sent the calendar invitation to ${speakableEmail(email)}. Thanks for your time.`;
     await appendAssistant(session, reply);
     sendText(session.socket, reply);
     scheduleEnd(session.socket, reply, "appointment_booked");

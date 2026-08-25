@@ -17,6 +17,13 @@ interface Env {
   MICROSOFT_CLIENT_ID?: string;
   MICROSOFT_CLIENT_SECRET?: string;
   MICROSOFT_TENANT_ID?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_STARTER?: string;
+  STRIPE_PRICE_GROWTH?: string;
+  STRIPE_PRICE_PRO?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -56,8 +63,20 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    return withSecurityHeaders(response);
   },
 };
+
+function withSecurityHeaders(response: Response): Response {
+  const secured = new Response(response.body, response);
+  secured.headers.set("x-content-type-options", "nosniff");
+  secured.headers.set("x-frame-options", "DENY");
+  secured.headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  secured.headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(self)");
+  secured.headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
+  secured.headers.set("content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://checkout.stripe.com https://billing.stripe.com");
+  return secured;
+}
 
 export default worker;

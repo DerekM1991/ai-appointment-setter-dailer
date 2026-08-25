@@ -1,15 +1,18 @@
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { getDb } from "@/db";
-import { campaignLeads, campaigns, calls, leads } from "@/db/schema";
+import { campaignLeads, campaigns, calls, leads, organizations } from "@/db/schema";
 import {
   evaluateLeadCompliance,
   isWithinCallingWindow,
   MAX_CONCURRENT_CALLS,
 } from "./compliance";
 import { normalizedBaseUrl, type RuntimeEnv } from "./env";
-import { getOutlookStatus } from "./outlook";
+import { getCalendarStatus } from "./calendar";
 import { createTwilioCall } from "./twilio";
 import { writeAuditEvent } from "./audit";
+import { resolveOpenAICredentials, resolveTwilioCredentials } from "./integrations";
+import { planFor } from "./plans";
+import { incrementUsage, usageValue } from "./usage";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -28,6 +31,7 @@ export async function launchCampaignBatch(input: {
   actor: string;
   request?: Request;
   limitOverride?: number;
+  organizationId?: string;
 }): Promise<{ launched: number; skippedOutsideWindow: number; blocked: number }> {
   const [campaign] = await input.db
     .select()
@@ -35,9 +39,18 @@ export async function launchCampaignBatch(input: {
     .where(eq(campaigns.id, input.campaignId))
     .limit(1);
   if (!campaign) throw new Error("Campaign not found.");
-  assertProductionReady(input.runtime);
-  const outlook = await getOutlookStatus(input.db);
-  if (!outlook.connected) throw new Error("Outlook must be connected before calling.");
+  if (input.organizationId && campaign.organizationId !== input.organizationId) throw new Error("Campaign not found.");
+  if (!campaign.createdByUserId) throw new Error("The campaign has no calendar owner.");
+  const [organization] = await input.db.select({ planKey: organizations.planKey }).from(organizations).where(eq(organizations.id, campaign.organizationId)).limit(1);
+  const plan = planFor(organization?.planKey);
+  const callsUsed = await usageValue(input.db, campaign.organizationId, "callsStarted");
+  if (callsUsed >= plan.callsPerMonth) throw new Error(`${plan.name} has reached its ${plan.callsPerMonth.toLocaleString()} call monthly limit.`);
+  const twilio = await resolveTwilioCredentials(input.db, input.runtime, campaign.organizationId);
+  const openai = await resolveOpenAICredentials(input.db, input.runtime, campaign.organizationId);
+  const resolvedRuntime = { ...input.runtime, TWILIO_ACCOUNT_SID: twilio.accountSid, TWILIO_AUTH_TOKEN: twilio.authToken, TWILIO_FROM_NUMBER: twilio.fromNumber, OPENAI_API_KEY: openai.apiKey, OPENAI_MODEL: openai.model };
+  assertProductionReady(resolvedRuntime);
+  const calendar = await getCalendarStatus(input.db, campaign.organizationId, campaign.createdByUserId);
+  if (!calendar.connected) throw new Error("The campaign owner must connect Outlook or Google Calendar before calling.");
 
   const [active] = await input.db
     .select({ value: count() })
@@ -48,11 +61,10 @@ export async function launchCampaignBatch(input: {
         inArray(calls.status, ACTIVE_CALL_STATUSES),
       ),
     );
-  const concurrency = Math.min(MAX_CONCURRENT_CALLS, Math.max(1, campaign.maxConcurrent));
+  const concurrency = Math.min(MAX_CONCURRENT_CALLS, plan.concurrentCalls, Math.max(1, campaign.maxConcurrent));
   const openSlots = Math.max(0, concurrency - Number(active?.value ?? 0));
-  const requested = input.limitOverride
-    ? Math.min(openSlots, input.limitOverride)
-    : openSlots;
+  const remainingCalls = Math.max(0, plan.callsPerMonth - callsUsed);
+  const requested = Math.min(remainingCalls, input.limitOverride ? Math.min(openSlots, input.limitOverride) : openSlots);
   if (!requested) return { launched: 0, skippedOutsideWindow: 0, blocked: 0 };
 
   const queued = await input.db
@@ -127,6 +139,7 @@ export async function launchCampaignBatch(input: {
     const now = Date.now();
     await input.db.insert(calls).values({
       id: callId,
+      organizationId: campaign.organizationId,
       campaignId: campaign.id,
       leadId: lead.leadId,
       status: "creating",
@@ -150,7 +163,7 @@ export async function launchCampaignBatch(input: {
     try {
       const voiceUrl = `${baseUrl}/api/twilio/voice?callId=${encodeURIComponent(callId)}`;
       const statusCallbackUrl = `${baseUrl}/api/twilio/status?callId=${encodeURIComponent(callId)}`;
-      const twilioCall = await createTwilioCall(input.runtime, {
+      const twilioCall = await createTwilioCall(resolvedRuntime, {
         to: lead.phoneE164,
         voiceUrl,
         statusCallbackUrl,
@@ -164,6 +177,7 @@ export async function launchCampaignBatch(input: {
         })
         .where(eq(calls.id, callId));
       launched += 1;
+      await incrementUsage(input.db, campaign.organizationId, "callsStarted");
     } catch (error) {
       await input.db
         .update(calls)
@@ -196,6 +210,7 @@ export async function launchCampaignBatch(input: {
       .set({ status: "running", updatedAt: Date.now() })
       .where(eq(campaigns.id, campaign.id));
     await writeAuditEvent(input.db, {
+      organizationId: campaign.organizationId,
       actor: input.actor,
       eventType: "campaign_batch_launched",
       entityType: "campaign",

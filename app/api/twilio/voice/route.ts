@@ -3,19 +3,17 @@ import { getDb } from "@/db";
 import { campaigns, calls, leads } from "@/db/schema";
 import { getRuntimeEnv, normalizedBaseUrl } from "@/lib/env";
 import { validateTwilioRequest, twiml, xmlEscape } from "@/lib/twilio";
+import { resolveTwilioCredentials } from "@/lib/integrations";
 
 export async function POST(request: Request) {
   const runtime = getRuntimeEnv();
-  const form = new URLSearchParams(await request.text());
-  if (!(await validateTwilioRequest(request, runtime.TWILIO_AUTH_TOKEN, form))) {
-    return new Response("Invalid Twilio signature.", { status: 403 });
-  }
   const callId = new URL(request.url).searchParams.get("callId");
   if (!callId) return twiml("<Hangup/>");
   const db = getDb();
   const [record] = await db
     .select({
       id: calls.id,
+      organizationId: calls.organizationId,
       twilioCallSid: calls.twilioCallSid,
       leadId: leads.id,
       campaignId: campaigns.id,
@@ -29,6 +27,9 @@ export async function POST(request: Request) {
     .innerJoin(campaigns, eq(calls.campaignId, campaigns.id))
     .where(eq(calls.id, callId))
     .limit(1);
+  const form = new URLSearchParams(await request.text());
+  const credentials = record ? await resolveTwilioCredentials(db, runtime, record.organizationId).catch(() => null) : null;
+  if (!credentials || !(await validateTwilioRequest(request, credentials.authToken, form))) return new Response("Invalid Twilio signature.", { status: 403 });
   if (!record || (record.twilioCallSid && record.twilioCallSid !== form.get("CallSid"))) {
     return twiml("<Hangup/>");
   }
@@ -51,6 +52,6 @@ export async function POST(request: Request) {
   const socketUrl = baseUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
   const connectAction = `${baseUrl}/api/twilio/connect-action?callId=${encodeURIComponent(callId)}`;
   return twiml(
-    `<Connect action="${xmlEscape(connectAction)}"><ConversationRelay url="${xmlEscape(`${socketUrl}/api/twilio/conversation`)}" welcomeGreeting="${xmlEscape(greeting)}" welcomeGreetingInterruptible="speech" language="en-US" interruptible="speech" interruptSensitivity="medium" reportInputDuringAgentSpeech="speech" ignoreBackchannel="true" hints="${xmlEscape(`${record.sellerName},${record.productName}`)}" events="tokens-played speaker-events"><Parameter name="callId" value="${xmlEscape(callId)}"/><Parameter name="leadId" value="${xmlEscape(record.leadId)}"/><Parameter name="campaignId" value="${xmlEscape(record.campaignId)}"/></ConversationRelay></Connect>`,
+    `<Connect action="${xmlEscape(connectAction)}"><ConversationRelay url="${xmlEscape(`${socketUrl}/api/twilio/conversation?callId=${encodeURIComponent(callId)}`)}" welcomeGreeting="${xmlEscape(greeting)}" welcomeGreetingInterruptible="speech" language="en-US" interruptible="speech" interruptSensitivity="medium" reportInputDuringAgentSpeech="speech" ignoreBackchannel="true" hints="${xmlEscape(`${record.sellerName},${record.productName}`)}" events="tokens-played speaker-events"><Parameter name="callId" value="${xmlEscape(callId)}"/><Parameter name="leadId" value="${xmlEscape(record.leadId)}"/><Parameter name="campaignId" value="${xmlEscape(record.campaignId)}"/></ConversationRelay></Connect>`,
   );
 }

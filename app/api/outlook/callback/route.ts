@@ -24,8 +24,11 @@ export async function GET(request: Request) {
       state,
       redirectUri: `${baseUrl}/api/outlook/callback`,
       userEmail: auth.email,
+      userId: auth.userId,
+      organizationId: auth.organizationId,
     });
     await writeAuditEvent(db, {
+      organizationId: auth.organizationId,
       actor: auth.email,
       eventType: "outlook_connected",
       entityType: "integration",

@@ -1,12 +1,15 @@
 # AI Appointment Setter
 
-A reusable, compliance-gated outbound calling workspace for consented prospects. It imports `.xlsx` or `.csv` workbooks, runs up to 20 simultaneous Twilio voice sessions, uses an explicitly disclosed OpenAI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook. Each campaign independently configures the seller, product or offer, AI agent name, factual product brief, objective, and meeting length, so the same deployment can support multiple businesses and sales pivots without code changes.
+A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. It imports `.xlsx` or `.csv` workbooks, runs plan-limited Twilio voice sessions, uses an explicitly disclosed OpenAI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook or Google Calendar.
 
 > This project intentionally does not provide an “upload and blast” mode. A prospect must have documented prior express written consent, current DNC-screening evidence, a valid phone number, and a known IANA timezone before the number can enter Twilio.
 
 ## What is implemented
 
 - Authenticated control-room dashboard with live campaign, call, appointment, integration, and audit views
+- Isolated workspaces, per-user identities, owner/admin/manager/member/viewer roles, and plan entitlements
+- Stripe subscription checkout, customer portal, signed webhooks, and Starter ($19.99), Growth ($49.99), and Pro ($99.99) tiers
+- Self-service encrypted integrations for Twilio, OpenAI, Outlook, Google Calendar, and Cal.com credentials
 - Campaign-level seller, product, agent identity, product brief, objective, concurrency, and appointment settings
 - Browser-side Excel/CSV parsing with normalized field aliases and server-side revalidation
 - D1 persistence for prospects, campaigns, queues, calls, transcripts, meetings, encrypted OAuth tokens, settings, and audit events
@@ -28,8 +31,8 @@ flowchart TD
   C --> D["Twilio calls: max 20 active"]
   D --> E["ConversationRelay WebSocket"]
   E --> F["OpenAI structured decision"]
-  F --> G["Microsoft Graph calendar"]
-  G --> H["Outlook or Teams invitation"]
+  F --> G["Outlook or Google calendar"]
+  G --> H["Confirmed invitation"]
   E --> I["Transcript and audit log"]
 ```
 
@@ -61,7 +64,7 @@ Copy `.env.example` for local development, or set these as encrypted production 
 | Variable | Purpose |
 | --- | --- |
 | `APP_BASE_URL` | Canonical HTTPS URL used for Twilio callbacks and Microsoft OAuth. |
-| `APP_OWNER_EMAIL` | Optional single-owner API allowlist. |
+| `APP_OWNER_EMAIL` | Optional bootstrap owner for the legacy workspace. Other authenticated users self-provision isolated trials. |
 | `APP_ENCRYPTION_KEY` | Base64-encoded 32-byte AES-GCM key for Microsoft tokens and OAuth state. |
 | `TWILIO_ACCOUNT_SID` | Twilio account identifier. |
 | `TWILIO_AUTH_TOKEN` | Twilio REST credential and webhook-signing secret. |
@@ -71,8 +74,27 @@ Copy `.env.example` for local development, or set these as encrypted production 
 | `MICROSOFT_CLIENT_ID` | Microsoft Entra application ID. |
 | `MICROSOFT_CLIENT_SECRET` | Microsoft Entra client secret. |
 | `MICROSOFT_TENANT_ID` | Tenant ID or `common` for multi-tenant/personal Microsoft accounts. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth web application credentials. |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe server API and webhook signing credentials. |
+| `STRIPE_PRICE_STARTER` / `GROWTH` / `PRO` | Recurring Stripe Price IDs for the three paid tiers. |
 
 Never commit real credentials. Generate the encryption key with `openssl rand -base64 32` and keep it stable; changing it invalidates stored Outlook tokens.
+
+## Accounts, roles, and plans
+
+Every authenticated user belongs to an isolated workspace. Owners control billing and all access; admins manage integrations and members; managers can import, configure, and launch campaigns; members can import and prepare campaigns; viewers have read-only access. Team seats, stored prospects, campaign count, concurrent calls, monthly calls, integration count, and audit retention are plan entitlements enforced by server routes—not browser-only checks.
+
+| Plan | Monthly | Seats | Prospects | Campaigns | Concurrent calls | Calls/month |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Starter | $19.99 | 1 | 1,000 | 3 | 2 | 250 |
+| Growth | $49.99 | 5 | 5,000 | 20 | 10 | 2,000 |
+| Pro | $99.99 | 20 | 25,000 | 100 | 20 | 10,000 |
+
+New workspaces receive a 14-day trial. Stripe Checkout creates subscriptions and the signed webhook is the source of truth for subscription state. Configure `/api/stripe/webhook` in Stripe and subscribe to Checkout completion plus customer subscription create/update/delete events.
+
+## Google Calendar setup
+
+Create an OAuth web client in Google Cloud and add `${APP_BASE_URL}/api/google/callback` as an authorized redirect URI. Enable Google Calendar API, configure the consent screen, and set the Google client credentials. Each user connects their own calendar from Integrations.
 
 ## Microsoft Outlook setup
 
@@ -147,9 +169,11 @@ npm test
 
 ## Production checklist
 
-- [ ] Restrict the site to the intended owner/workspace and set `APP_OWNER_EMAIL`.
+- [ ] Choose site access: keep owner-only for staging, then deliberately enable customer access after testing sign-in and tenant isolation.
 - [ ] Add all secrets through the hosting environment, never through source control.
 - [ ] Connect Outlook and verify a disposable test event can be created.
+- [ ] Configure Google OAuth if Google Calendar will be offered.
+- [ ] Configure Stripe products/prices, signed webhook events, tax policy, receipts, and customer portal.
 - [ ] Complete Twilio ConversationRelay onboarding and confirm concurrency/CPS limits.
 - [ ] Verify caller identity, branded calling, and any registration required in target regions.
 - [ ] Run a consented test call to your own number and exercise interruption, no-interest, booking, and opt-out paths.
@@ -166,13 +190,20 @@ npm test
 | `/api/campaigns/:id/launch` | Attested, revalidated launch |
 | `/api/outlook/connect` | Start Microsoft OAuth |
 | `/api/outlook/callback` | Store encrypted Microsoft tokens |
+| `/api/google/connect` and `/callback` | Google Calendar delegated OAuth |
+| `/api/integrations` | List, verify, save, and remove encrypted user connections |
+| `/api/team` | Role- and seat-limited workspace membership |
+| `/api/billing/*` | Stripe Checkout and billing portal |
+| `/api/stripe/webhook` | Signed subscription state updates |
 | `/api/twilio/voice` | Signed TwiML for each outbound call |
 | `/api/twilio/status` | Signed lifecycle callback and queue drain |
 | `/api/twilio/conversation` | Signed ConversationRelay WebSocket |
 
 ## Data handling
 
-- Outlook tokens are encrypted at rest with AES-256-GCM.
+- OAuth tokens and user-supplied provider credentials are encrypted at rest with AES-256-GCM.
+- Every private query is scoped to the authenticated organization; write routes enforce role permissions and same-origin checks.
+- Security headers deny framing, limit browser capabilities, enforce HTTPS transport, and constrain resource origins.
 - Phone numbers are masked in dashboard API responses.
 - The app stores text transcripts, outcomes, and audit events; define an organizational retention policy before production use.
 - The social card and public metadata contain no customer data.

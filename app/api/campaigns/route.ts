@@ -1,22 +1,27 @@
-import { desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { campaignLeads, campaigns, leads } from "@/db/schema";
 import { getAuthorizedApiUser, errorResponse } from "@/lib/api-auth";
 import { MAX_CONCURRENT_CALLS } from "@/lib/compliance";
 import { writeAuditEvent } from "@/lib/audit";
+import { verifySameOrigin } from "@/lib/security";
+import { hasPermission, permissionDenied } from "@/lib/tenant";
 
 export async function GET() {
   const auth = await getAuthorizedApiUser();
   if (!auth.ok) return auth.response;
   const db = getDb();
   return Response.json({
-    campaigns: await db.select().from(campaigns).orderBy(desc(campaigns.createdAt)),
+    campaigns: await db.select().from(campaigns).where(eq(campaigns.organizationId, auth.organizationId)).orderBy(desc(campaigns.createdAt)),
   });
 }
 
 export async function POST(request: Request) {
   const auth = await getAuthorizedApiUser();
   if (!auth.ok) return auth.response;
+  const originError = verifySameOrigin(request);
+  if (originError) return originError;
+  if (!hasPermission(auth, "campaigns:write")) return permissionDenied("campaigns:write");
   try {
     const payload = (await request.json()) as {
       name?: string;
@@ -42,14 +47,18 @@ export async function POST(request: Request) {
       throw new Error("Enter a factual product brief between 40 and 2,000 characters.");
     }
     const db = getDb();
+    const [campaignCount] = await db.select({ value: count() }).from(campaigns).where(eq(campaigns.organizationId, auth.organizationId));
+    if (Number(campaignCount?.value ?? 0) >= auth.plan.campaigns) throw new Error(`${auth.plan.name} supports ${auth.plan.campaigns} campaigns.`);
     const eligible = await db
       .select({ id: leads.id })
       .from(leads)
-      .where(eq(leads.status, "eligible"));
+      .where(and(eq(leads.organizationId, auth.organizationId), eq(leads.status, "eligible")));
     const now = Date.now();
     const id = crypto.randomUUID();
     await db.insert(campaigns).values({
       id,
+      organizationId: auth.organizationId,
+      createdByUserId: auth.userId,
       name,
       sellerName,
       productName,
@@ -58,7 +67,7 @@ export async function POST(request: Request) {
       objective: payload.objective?.trim() || "Book a discovery call",
       status: "draft",
       maxConcurrent: Math.min(
-        MAX_CONCURRENT_CALLS,
+        Math.min(MAX_CONCURRENT_CALLS, auth.plan.concurrentCalls),
         Math.max(1, Number(payload.maxConcurrent) || 20),
       ),
       callsPerSecond: Math.min(5, Math.max(1, Number(payload.callsPerSecond) || 1)),
@@ -83,6 +92,7 @@ export async function POST(request: Request) {
       );
     }
     await writeAuditEvent(db, {
+      organizationId: auth.organizationId,
       actor: auth.email,
       eventType: "campaign_created",
       entityType: "campaign",

@@ -7,10 +7,124 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    displayName: text("display_name").notNull(),
+    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("users_email_unique").on(table.email)],
+);
+
+export const organizations = sqliteTable(
+  "organizations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    planKey: text("plan_key", { enum: ["trial", "starter", "growth", "pro"] })
+      .notNull()
+      .default("trial"),
+    subscriptionStatus: text("subscription_status", {
+      enum: ["trialing", "active", "past_due", "canceled", "incomplete"],
+    })
+      .notNull()
+      .default("trialing"),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    currentPeriodEnd: integer("current_period_end"),
+    trialEndsAt: integer("trial_ends_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("organizations_slug_unique").on(table.slug),
+    uniqueIndex("organizations_stripe_customer_unique").on(table.stripeCustomerId),
+    uniqueIndex("organizations_stripe_subscription_unique").on(table.stripeSubscriptionId),
+  ],
+);
+
+export const memberships = sqliteTable(
+  "memberships",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "admin", "manager", "member", "viewer"] })
+      .notNull()
+      .default("member"),
+    status: text("status", { enum: ["active", "invited", "disabled"] })
+      .notNull()
+      .default("active"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId] }),
+    index("memberships_user_idx").on(table.userId, table.status),
+  ],
+);
+
+export const integrationConnections = sqliteTable(
+  "integration_connections",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider", {
+      enum: ["twilio", "openai", "microsoft", "google", "calcom"],
+    }).notNull(),
+    category: text("category", { enum: ["telephony", "ai", "calendar"] }).notNull(),
+    scope: text("scope", { enum: ["workspace", "personal"] }).notNull(),
+    label: text("label").notNull(),
+    accountIdentifier: text("account_identifier"),
+    encryptedConfig: text("encrypted_config").notNull(),
+    status: text("status", { enum: ["connected", "error", "disabled"] })
+      .notNull()
+      .default("connected"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    lastVerifiedAt: integer("last_verified_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("integrations_org_category_idx").on(table.organizationId, table.category, table.status),
+    index("integrations_owner_idx").on(table.ownerUserId, table.provider),
+  ],
+);
+
+export const usageCounters = sqliteTable(
+  "usage_counters",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    periodKey: text("period_key").notNull(),
+    contactsImported: integer("contacts_imported").notNull().default(0),
+    callsStarted: integer("calls_started").notNull().default(0),
+    callMinutes: integer("call_minutes").notNull().default(0),
+    aiTurns: integer("ai_turns").notNull().default(0),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.periodKey] })],
+);
+
 export const leads = sqliteTable(
   "leads",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().default("legacy"),
+    createdByUserId: text("created_by_user_id"),
     firstName: text("first_name").notNull(),
     lastName: text("last_name").notNull(),
     company: text("company"),
@@ -44,8 +158,8 @@ export const leads = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    uniqueIndex("leads_phone_unique").on(table.phoneE164),
-    index("leads_status_idx").on(table.status),
+    uniqueIndex("leads_org_phone_unique").on(table.organizationId, table.phoneE164),
+    index("leads_org_status_idx").on(table.organizationId, table.status),
   ],
 );
 
@@ -53,6 +167,8 @@ export const campaigns = sqliteTable(
   "campaigns",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().default("legacy"),
+    createdByUserId: text("created_by_user_id"),
     name: text("name").notNull(),
     sellerName: text("seller_name").notNull().default("Your company"),
     productName: text("product_name").notNull().default("your product or service"),
@@ -72,7 +188,7 @@ export const campaigns = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [index("campaigns_status_idx").on(table.status)],
+  (table) => [index("campaigns_org_status_idx").on(table.organizationId, table.status)],
 );
 
 export const campaignLeads = sqliteTable(
@@ -106,6 +222,7 @@ export const calls = sqliteTable(
   "calls",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().default("legacy"),
     twilioCallSid: text("twilio_call_sid"),
     campaignId: text("campaign_id").references(() => campaigns.id, {
       onDelete: "set null",
@@ -130,6 +247,7 @@ export const calls = sqliteTable(
   },
   (table) => [
     uniqueIndex("calls_twilio_sid_unique").on(table.twilioCallSid),
+    index("calls_org_status_idx").on(table.organizationId, table.status),
     index("calls_campaign_status_idx").on(table.campaignId, table.status),
     index("calls_lead_idx").on(table.leadId),
   ],
@@ -139,6 +257,7 @@ export const appointments = sqliteTable(
   "appointments",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().default("legacy"),
     callId: text("call_id").references(() => calls.id, {
       onDelete: "set null",
     }),
@@ -162,7 +281,7 @@ export const appointments = sqliteTable(
   },
   (table) => [
     uniqueIndex("appointments_graph_event_unique").on(table.graphEventId),
-    index("appointments_start_idx").on(table.startAt),
+    index("appointments_org_start_idx").on(table.organizationId, table.startAt),
   ],
 );
 
@@ -187,6 +306,7 @@ export const auditEvents = sqliteTable(
   "audit_events",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().default("legacy"),
     actor: text("actor").notNull(),
     eventType: text("event_type").notNull(),
     entityType: text("entity_type"),

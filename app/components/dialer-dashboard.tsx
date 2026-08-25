@@ -26,9 +26,10 @@ type IconName =
 type NavItem = { id: string; label: string; icon: IconName };
 
 type DashboardData = {
-  viewer: { displayName: string; email: string };
+  viewer: { userId: string; displayName: string; email: string; role: string; permissions: string[] };
+  workspace: { id: string; name: string; planKey: string; plan: { name: string; priceMonthly: number; seats: number; prospects: number; campaigns: number; concurrentCalls: number; callsPerMonth: number; workspaceIntegrations: number }; subscriptionStatus: string; trialEndsAt: number | null; memberCount: number; stripeConfigured: boolean; hasBillingAccount: boolean; currentPeriodEnd: number | null; usage: { callsStarted: number; contactsImported: number; callMinutes: number; aiTurns: number } };
   metrics: { eligible: number; blocked: number; active: number; booked: number };
-  readiness: Record<"twilio" | "openai" | "outlook" | "eligibleProspects" | "baseUrl", boolean>;
+  readiness: Record<"twilio" | "openai" | "calendar" | "eligibleProspects" | "baseUrl", boolean>;
   readinessPassed: number;
   leads: Array<{
     id: string;
@@ -95,7 +96,10 @@ type DashboardData = {
     createdAt: number;
   }>;
   integrations: {
+    calendar: { connected: boolean; provider: string | null; accountEmail: string | null };
     outlook: { connected: boolean; accountEmail: string | null };
+    google: { connected: boolean; accountEmail: string | null };
+    connections: Array<{ id: string; provider: string; category: string; scope: string; label: string; accountIdentifier: string | null; status: string; ownerUserId: string | null }>;
     twilio: { configured: boolean };
     openai: { configured: boolean; model: string };
     appBaseUrl: { configured: boolean };
@@ -116,6 +120,8 @@ const systemNav: NavItem[] = [
   { id: "agent", label: "Agent studio", icon: "agent" },
   { id: "compliance", label: "Compliance", icon: "shield" },
   { id: "integrations", label: "Integrations", icon: "plug" },
+  { id: "team", label: "Team & roles", icon: "prospects" },
+  { id: "billing", label: "Billing & plans", icon: "settings" },
 ];
 
 const sectionTitles: Record<string, { eyebrow: string; title: string; subtitle: string }> = {
@@ -157,7 +163,17 @@ const sectionTitles: Record<string, { eyebrow: string; title: string; subtitle: 
   integrations: {
     eyebrow: "System connections",
     title: "Integrations",
-    subtitle: "Connect Outlook and verify the production calling services.",
+    subtitle: "Connect your own calling, AI, and calendar providers securely.",
+  },
+  team: {
+    eyebrow: "Access control",
+    title: "Team & roles",
+    subtitle: "Manage workspace seats with least-privilege role assignments.",
+  },
+  billing: {
+    eyebrow: "Subscription",
+    title: "Billing & plans",
+    subtitle: "Choose limits that match your calling volume and team size.",
   },
 };
 
@@ -199,8 +215,13 @@ export default function DialerDashboard({
     const initial = window.setTimeout(() => {
       void loadDashboard();
       const params = new URLSearchParams(window.location.search);
+      const requestedSection = params.get("section");
+      if (requestedSection && sectionTitles[requestedSection]) setActiveSection(requestedSection);
       if (params.get("outlook") === "connected") {
         setToast({ tone: "success", message: "Outlook connected successfully." });
+        window.history.replaceState({}, "", "/");
+      } else if (params.get("google") === "connected") {
+        setToast({ tone: "success", message: "Google Calendar connected successfully." });
         window.history.replaceState({}, "", "/");
       } else if (params.get("outlook_error")) {
         setToast({ tone: "error", message: params.get("outlook_error") || "Outlook connection failed." });
@@ -386,7 +407,7 @@ export default function DialerDashboard({
             <span className="profile-avatar">{initials}</span>
             <span className="profile-copy">
               <strong>{displayName}</strong>
-              <span title={userEmail}>Administrator</span>
+              <span title={userEmail}>{humanize(data?.viewer.role || "member")} · {data?.workspace.plan.name || "Trial"}</span>
             </span>
             <Icon name="settings" size={17} />
           </div>
@@ -438,6 +459,7 @@ export default function DialerDashboard({
               onNewCampaign={() => setCampaignModal(true)}
               onLaunch={(id) => void launchCampaign(id)}
               onDisconnectOutlook={() => void disconnectOutlookAccount()}
+              onRefresh={() => void loadDashboard(true)}
             />
           )}
         </div>
@@ -466,6 +488,7 @@ function DashboardSection(props: {
   onNewCampaign: () => void;
   onLaunch: (id: string) => void;
   onDisconnectOutlook: () => void;
+  onRefresh: () => void;
 }) {
   const data = props.data;
   if (!data) return null;
@@ -487,13 +510,15 @@ function DashboardSection(props: {
   if (props.section === "appointments") return <AppointmentsView data={data} onConnect={() => props.onNavigate("integrations")} />;
   if (props.section === "agent") return <AgentView data={data} />;
   if (props.section === "compliance") return <ComplianceView data={data} />;
-  return <IntegrationsView data={data} onDisconnectOutlook={props.onDisconnectOutlook} busy={props.busy} />;
+  if (props.section === "integrations") return <IntegrationsView data={data} onDisconnectOutlook={props.onDisconnectOutlook} busy={props.busy} onRefresh={props.onRefresh} />;
+  if (props.section === "team") return <TeamView data={data} />;
+  return <BillingView data={data} />;
 }
 
 function Overview({ data, onNavigate, onImport }: { data: DashboardData; onNavigate: (id: string) => void; onImport: () => void }) {
   const metrics = [
     { label: "Eligible prospects", value: data.metrics.eligible, detail: "Written consent verified", icon: "prospects" as IconName, tone: "cyan" },
-    { label: "Live sessions", value: `${data.metrics.active} / 20`, detail: "Concurrency limit", icon: "phone" as IconName, tone: "blue" },
+    { label: "Live sessions", value: `${data.metrics.active} / ${data.workspace.plan.concurrentCalls}`, detail: `${data.workspace.plan.name} concurrency`, icon: "phone" as IconName, tone: "blue" },
     { label: "Meetings booked", value: data.metrics.booked, detail: "Confirmed in Outlook", icon: "calendar" as IconName, tone: "green" },
     { label: "Compliance blocked", value: data.metrics.blocked, detail: "Never sent to dialer", icon: "block" as IconName, tone: "amber" },
   ];
@@ -582,7 +607,7 @@ function CallsView({ data }: { data: DashboardData }) {
 }
 
 function AppointmentsView({ data, onConnect }: { data: DashboardData; onConnect: () => void }) {
-  if (!data.integrations.outlook.connected) return <section className="panel focused-empty"><div className="focused-icon"><Icon name="calendar" size={30} /></div><h2>Outlook is not connected yet</h2><p>Connect Microsoft Graph so the agent can read real availability and create Outlook or Teams invitations.</p><button className="button button-primary" type="button" onClick={onConnect}>Connect Outlook <Icon name="arrow" size={15} /></button></section>;
+  if (!data.integrations.calendar.connected) return <section className="panel focused-empty"><div className="focused-icon"><Icon name="calendar" size={30} /></div><h2>Connect a calendar</h2><p>Connect Outlook or Google Calendar so the agent can read availability and create invitations.</p><button className="button button-primary" type="button" onClick={onConnect}>Choose calendar <Icon name="arrow" size={15} /></button></section>;
   if (!data.appointments.length) return <section className="panel focused-empty"><div className="focused-icon"><Icon name="calendar" size={30} /></div><h2>Outlook is ready</h2><p>Confirmed meetings will appear here with their source prospect and Teams link.</p></section>;
   return <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">Microsoft Graph events</span><h2>{data.appointments.length} appointments</h2></div></div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Prospect</th><th>When</th><th>Email</th><th>Status</th><th>Meeting</th></tr></thead><tbody>{data.appointments.map((appointment) => <tr key={appointment.id}><td><strong>{appointment.firstName} {appointment.lastName}</strong><span>{appointment.company || appointment.subject}</span></td><td><strong>{formatDate(appointment.startAt, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: appointment.timezone })}</strong><span>{appointment.timezone}</span></td><td>{appointment.attendeeEmail}</td><td><StatusBadge value={appointment.status} /></td><td>{appointment.joinUrl ? <a className="table-link" href={appointment.joinUrl} target="_blank" rel="noreferrer">Open Teams <Icon name="arrow" size={13} /></a> : "Outlook event"}</td></tr>)}</tbody></table></div></section>;
 }
@@ -602,8 +627,41 @@ function ComplianceView({ data }: { data: DashboardData }) {
   return <section className="compliance-layout"><article className="panel"><div className="panel-header compact"><div><span className="panel-kicker">Server-enforced rules</span><h2>Calling policy</h2></div><span className="status-badge status-eligible">Active</span></div><div className="rule-list">{rules.map(([title, copy]) => <div className="rule-row" key={title}><span className="control-check"><Icon name="check" size={13} /></span><div><strong>{title}</strong><span>{copy}</span></div></div>)}</div><div className="legal-note"><Icon name="shield" size={18} /><p>This software provides technical safeguards, not legal advice. The operator remains responsible for jurisdiction-specific telemarketing, recording, caller-ID, licensing, and industry rules.</p></div></article><article className="panel audit-panel"><div className="panel-header compact"><div><span className="panel-kicker">Append-only events</span><h2>Audit log</h2></div><span className="live-refresh"><i />Live</span></div>{data.auditEvents.length ? <AuditList events={data.auditEvents} /> : <div className="compact-empty">No audit events yet.</div>}</article></section>;
 }
 
-function IntegrationsView({ data, onDisconnectOutlook, busy }: { data: DashboardData; onDisconnectOutlook: () => void; busy: string | null }) {
-  return <section className="integration-card-grid"><IntegrationCard icon="calendar" name="Microsoft Outlook" description="Availability, Outlook events, and Teams invitations" ready={data.integrations.outlook.connected} detail={data.integrations.outlook.accountEmail || "OAuth 2.0 not connected"} action={data.integrations.outlook.connected ? <button className="button button-secondary" type="button" onClick={onDisconnectOutlook} disabled={busy === "outlook-disconnect"}>{busy === "outlook-disconnect" ? "Disconnecting…" : "Disconnect"}</button> : <a className="button button-primary" href="/api/outlook/connect">Connect Outlook <Icon name="arrow" size={15} /></a>} /><IntegrationCard icon="phone" name="Twilio Voice" description="Outbound Calls API, signed webhooks, and ConversationRelay" ready={data.integrations.twilio.configured} detail={data.integrations.twilio.configured ? "Credentials loaded securely" : "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER"} /><IntegrationCard icon="agent" name="OpenAI" description="Structured, low-latency conversation decisions" ready={data.integrations.openai.configured} detail={data.integrations.openai.configured ? data.integrations.openai.model : "Set OPENAI_API_KEY; OPENAI_MODEL is optional"} /><IntegrationCard icon="shield" name="Application security" description="Canonical webhook URLs and encrypted OAuth tokens" ready={data.integrations.appBaseUrl.configured} detail={data.integrations.appBaseUrl.configured ? "APP_BASE_URL and encrypted token storage ready" : "Set APP_BASE_URL and a base64 32-byte APP_ENCRYPTION_KEY"} /></section>;
+function IntegrationsView({ data, onDisconnectOutlook, busy, onRefresh }: { data: DashboardData; onDisconnectOutlook: () => void; busy: string | null; onRefresh: () => void }) {
+  const [provider, setProvider] = useState<"twilio" | "openai" | "calcom" | null>(null);
+  const [saving, setSaving] = useState(false);
+  const canWorkspace = data.viewer.permissions.includes("integrations:workspace");
+  async function save(form: HTMLFormElement) { setSaving(true); try { const values = new FormData(form); const config: Record<string, string> = {}; values.forEach((value, key) => { if (key !== "label") config[key] = String(value); }); const response = await fetch("/api/integrations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider, scope: provider === "calcom" ? "personal" : "workspace", label: values.get("label"), config }) }); const payload = await response.json() as { error?: string }; if (!response.ok) throw new Error(payload.error || "Could not save integration."); setProvider(null); onRefresh(); } catch (error) { window.alert(errorMessage(error)); } finally { setSaving(false); } }
+  async function remove(id: string) { if (!window.confirm("Remove this integration and its encrypted credentials?")) return; const response = await fetch(`/api/integrations?id=${encodeURIComponent(id)}`, { method: "DELETE" }); const payload = await response.json() as { error?: string }; if (!response.ok) return window.alert(payload.error || "Could not remove integration."); onRefresh(); }
+  const connected = (name: string) => data.integrations.connections.find((item) => item.provider === name);
+  return <><section className="integration-card-grid">
+    <IntegrationCard icon="calendar" name="Microsoft Outlook" description="Personal availability, Outlook events, and Teams links" ready={data.integrations.outlook.connected} detail={data.integrations.outlook.accountEmail || "Delegated Microsoft OAuth"} action={data.integrations.outlook.connected ? <button className="button button-secondary" type="button" onClick={onDisconnectOutlook} disabled={busy === "outlook-disconnect"}>{busy === "outlook-disconnect" ? "Disconnecting…" : "Disconnect"}</button> : <a className="button button-primary" href="/api/outlook/connect">Connect Outlook</a>} />
+    <IntegrationCard icon="calendar" name="Google Calendar" description="Personal availability, Google events, and Meet links" ready={data.integrations.google.connected} detail={data.integrations.google.accountEmail || "Google OAuth web-server flow"} action={data.integrations.google.connected ? <span className="config-locked">Connected to this user</span> : <a className="button button-primary" href="/api/google/connect">Connect Google</a>} />
+    <IntegrationCard icon="phone" name="Twilio Voice" description="Workspace outbound calling and signed callbacks" ready={data.integrations.twilio.configured} detail={connected("twilio")?.accountIdentifier || "Bring your own Twilio account"} action={canWorkspace ? <button className="button button-secondary" onClick={() => setProvider("twilio")}>Add or replace</button> : undefined} />
+    <IntegrationCard icon="agent" name="OpenAI" description="Workspace conversation intelligence" ready={data.integrations.openai.configured} detail={data.integrations.openai.model} action={canWorkspace ? <button className="button button-secondary" onClick={() => setProvider("openai")}>Add or replace</button> : undefined} />
+    <IntegrationCard icon="calendar" name="Cal.com" description="Personal hosted booking fallback" ready={Boolean(connected("calcom"))} detail={connected("calcom")?.accountIdentifier || "API key and HTTPS booking URL"} action={<button className="button button-secondary" onClick={() => setProvider("calcom")}>Connect Cal.com</button>} />
+    <IntegrationCard icon="shield" name="Encrypted credential vault" description="Secrets are encrypted at rest and never returned to the browser" ready={data.integrations.appBaseUrl.configured} detail={`${data.integrations.connections.length} visible connection${data.integrations.connections.length === 1 ? "" : "s"}`} />
+  </section>{data.integrations.connections.length ? <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">Connected accounts</span><h2>Saved integrations</h2></div></div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Provider</th><th>Label</th><th>Scope</th><th>Account</th><th /></tr></thead><tbody>{data.integrations.connections.map((item) => <tr key={item.id}><td><strong>{humanize(item.provider)}</strong></td><td>{item.label}</td><td><StatusBadge value={item.scope} /></td><td>{item.accountIdentifier || "Connected"}</td><td><button className="text-button" onClick={() => void remove(item.id)}>Remove</button></td></tr>)}</tbody></table></div></section> : null}
+  {provider ? <CredentialModal provider={provider} saving={saving} onClose={() => setProvider(null)} onSubmit={save} /> : null}</>;
+}
+
+function CredentialModal({ provider, saving, onClose, onSubmit }: { provider: "twilio" | "openai" | "calcom"; saving: boolean; onClose: () => void; onSubmit: (form: HTMLFormElement) => void }) {
+  return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true"><div className="modal-header"><div><span className="panel-kicker">Encrypted connection</span><h2>Connect {humanize(provider)}</h2></div><button className="icon-button" onClick={onClose}><Icon name="close" /></button></div><form onSubmit={(event) => { event.preventDefault(); onSubmit(event.currentTarget); }}><label className="form-field"><span>Connection label</span><input name="label" required defaultValue={`My ${humanize(provider)}`} /></label>{provider === "twilio" ? <><label className="form-field"><span>Account SID</span><input name="accountSid" required autoComplete="off" /></label><label className="form-field"><span>Auth token</span><input name="authToken" type="password" required autoComplete="new-password" /></label><label className="form-field"><span>From number</span><input name="fromNumber" required placeholder="+15551234567" /></label></> : provider === "openai" ? <><label className="form-field"><span>API key</span><input name="apiKey" type="password" required autoComplete="new-password" /></label><label className="form-field"><span>Model</span><select name="model" defaultValue="gpt-5.6-terra"><option value="gpt-5.6-terra">GPT-5.6 Terra</option><option value="gpt-5.6-luna">GPT-5.6 Luna</option><option value="gpt-5.5">GPT-5.5</option></select></label></> : <><label className="form-field"><span>API key</span><input name="apiKey" type="password" required /></label><label className="form-field"><span>Booking URL</span><input name="bookingUrl" type="url" required placeholder="https://cal.com/you/discovery" /></label></>}<div className="modal-note"><Icon name="shield" /><span>Credentials are verified server-side before encrypted storage.</span></div><div className="modal-actions"><button className="button button-secondary" type="button" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? "Verifying…" : "Verify and connect"}</button></div></form></section></div>;
+}
+
+function TeamView({ data }: { data: DashboardData }) {
+  const [members, setMembers] = useState<Array<{ userId: string; displayName: string; email: string; role: string; status: string }>>([]); const [error, setError] = useState(""); const canManage = data.viewer.permissions.includes("members:manage");
+  const load = useCallback(async () => { if (!canManage) return; const response = await fetch("/api/team"); const payload = await response.json() as { members?: typeof members; error?: string }; if (response.ok) setMembers(payload.members || []); else setError(payload.error || "Could not load team."); }, [canManage]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  async function invite(form: HTMLFormElement) { const values = new FormData(form); const response = await fetch("/api/team", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: values.get("email"), role: values.get("role") }) }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not add member."); form.reset(); setError(""); void load(); }
+  if (!canManage) return <section className="panel focused-empty"><Icon name="shield" size={30} /><h2>Owner or admin access required</h2><p>Your role can use the workspace but cannot manage membership.</p></section>;
+  return <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">{data.workspace.memberCount} of {data.workspace.plan.seats} seats</span><h2>{data.workspace.name}</h2></div></div><form className="inline-form" onSubmit={(event) => { event.preventDefault(); void invite(event.currentTarget); }}><input name="email" type="email" required placeholder="teammate@company.com" /><select name="role" defaultValue="member"><option value="admin">Admin</option><option value="manager">Manager</option><option value="member">Member</option><option value="viewer">Viewer</option></select><button className="button button-primary">Add member</button></form>{error ? <p className="legal-note">{error}</p> : null}<div className="data-table-wrap"><table className="data-table"><thead><tr><th>Member</th><th>Role</th><th>Status</th></tr></thead><tbody>{members.map((member) => <tr key={member.userId}><td><strong>{member.displayName}</strong><span>{member.email}</span></td><td>{humanize(member.role)}</td><td><StatusBadge value={member.status} /></td></tr>)}</tbody></table></div></section>;
+}
+
+function BillingView({ data }: { data: DashboardData }) {
+  const plans = [{ key: "starter", name: "Starter", price: 19.99, detail: "250 calls · 1 seat · 2 concurrent" }, { key: "growth", name: "Growth", price: 49.99, detail: "2,000 calls · 5 seats · 10 concurrent" }, { key: "pro", name: "Pro", price: 99.99, detail: "10,000 calls · 20 seats · 20 concurrent" }];
+  async function billing(path: "checkout" | "portal", plan?: string) { const response = await fetch(`/api/billing/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(plan ? { plan } : {}) }); const payload = await response.json() as { url?: string; error?: string }; if (!response.ok || !payload.url) return window.alert(payload.error || "Billing is not available."); window.location.href = payload.url; }
+  return <><section className="panel section-panel"><div className="panel-header"><div><span className="panel-kicker">Current subscription</span><h2>{data.workspace.plan.name} · {humanize(data.workspace.subscriptionStatus)}</h2></div>{data.workspace.hasBillingAccount ? <button className="button button-secondary" onClick={() => void billing("portal")}>Manage billing</button> : null}</div><div className="campaign-details"><DetailRow label="Calls this month" value={`${data.workspace.usage.callsStarted.toLocaleString()} / ${data.workspace.plan.callsPerMonth.toLocaleString()}`} /><DetailRow label="Team seats" value={`${data.workspace.memberCount} / ${data.workspace.plan.seats}`} /><DetailRow label="Concurrent calls" value={String(data.workspace.plan.concurrentCalls)} /></div></section><section className="integration-card-grid">{plans.map((plan) => <article className="panel integration-card" key={plan.key}><span className="panel-kicker">Monthly</span><h2>{plan.name}</h2><div className="metric-value">${plan.price}</div><p>{plan.detail}</p><button className="button button-primary" disabled={!data.viewer.permissions.includes("billing:manage") || !data.workspace.stripeConfigured || data.workspace.planKey === plan.key} onClick={() => void billing("checkout", plan.key)}>{data.workspace.planKey === plan.key ? "Current plan" : "Choose plan"}</button></article>)}</section>{!data.workspace.stripeConfigured ? <section className="legal-note"><Icon name="shield" /><p>Stripe price IDs and webhook signing must be configured by the deployer before paid checkout is enabled.</p></section> : null}</>;
 }
 
 function CampaignModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (form: HTMLFormElement) => void }) {

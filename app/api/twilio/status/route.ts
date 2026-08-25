@@ -4,20 +4,20 @@ import { campaignLeads, campaigns, calls, leads } from "@/db/schema";
 import { launchCampaignBatch } from "@/lib/campaign-runner";
 import { getRuntimeEnv } from "@/lib/env";
 import { validateTwilioRequest } from "@/lib/twilio";
+import { resolveTwilioCredentials } from "@/lib/integrations";
 
 const terminal = new Set(["completed", "busy", "no-answer", "canceled", "failed"]);
 const activeStatuses = ["queued", "initiated", "ringing", "answered", "in-progress"];
 
 export async function POST(request: Request) {
   const runtime = getRuntimeEnv();
-  const form = new URLSearchParams(await request.text());
-  if (!(await validateTwilioRequest(request, runtime.TWILIO_AUTH_TOKEN, form))) {
-    return new Response("Invalid Twilio signature.", { status: 403 });
-  }
   const callId = new URL(request.url).searchParams.get("callId");
   if (!callId) return new Response(null, { status: 204 });
   const db = getDb();
   const [record] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
+  const form = new URLSearchParams(await request.text());
+  const credentials = record ? await resolveTwilioCredentials(db, runtime, record.organizationId).catch(() => null) : null;
+  if (!credentials || !(await validateTwilioRequest(request, credentials.authToken, form))) return new Response("Invalid Twilio signature.", { status: 403 });
   if (!record || (record.twilioCallSid && record.twilioCallSid !== form.get("CallSid"))) {
     return new Response(null, { status: 204 });
   }
@@ -69,6 +69,7 @@ export async function POST(request: Request) {
         runtime,
         campaignId: record.campaignId,
         actor: "system:twilio",
+        organizationId: record.organizationId,
         request,
         limitOverride: 1,
       });
