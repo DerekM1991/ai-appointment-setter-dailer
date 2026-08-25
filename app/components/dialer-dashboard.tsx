@@ -36,6 +36,7 @@ type DashboardData = {
   readinessPassed: number;
   leads: Array<{
     id: string;
+    createdByUserId: string | null;
     firstName: string;
     lastName: string;
     company: string | null;
@@ -46,6 +47,10 @@ type DashboardData = {
     consentStatus: string;
     dncCheckedAt: number | null;
     status: string;
+    crmStage: "new" | "attempted" | "connected" | "qualified" | "appointment_set" | "nurturing" | "won" | "lost" | "do_not_contact";
+    nextFollowUpAt: number | null;
+    dealValueCents: number;
+    notes: string | null;
     blockReasons: string[];
     createdAt: number;
     outreachCount: number;
@@ -92,6 +97,7 @@ type DashboardData = {
     lastName: string;
     company: string | null;
   }>;
+  crmTasks: Array<{ id: string; leadId: string; title: string; dueAt: number | null; status: "open" | "completed" | "cancelled"; createdAt: number }>;
   auditEvents: Array<{
     id: string;
     actor: string;
@@ -115,7 +121,7 @@ type Toast = { tone: "success" | "error" | "info"; message: string };
 
 const primaryNav: NavItem[] = [
   { id: "overview", label: "Overview", icon: "overview" },
-  { id: "prospects", label: "Prospects", icon: "prospects" },
+  { id: "prospects", label: "CRM", icon: "prospects" },
   { id: "campaigns", label: "Campaigns", icon: "campaigns" },
   { id: "calls", label: "Calls", icon: "calls" },
   { id: "appointments", label: "Appointments", icon: "calendar" },
@@ -137,9 +143,9 @@ const sectionTitles: Record<string, { eyebrow: string; title: string; subtitle: 
     subtitle: "A protected workspace for consented outreach and Outlook scheduling.",
   },
   prospects: {
-    eyebrow: "Lead operations",
-    title: "Prospects",
-    subtitle: "Import, validate, and qualify every contact before dialing.",
+    eyebrow: "Customer relationship management",
+    title: "CRM",
+    subtitle: "Move prospects from first outreach to booked meeting without leaving the dialer.",
   },
   campaigns: {
     eyebrow: "Outbound programs",
@@ -509,7 +515,7 @@ function DashboardSection(props: {
   const data = props.data;
   if (!data) return null;
   if (props.section === "overview") return <Overview data={data} onNavigate={props.onNavigate} onImport={props.onImport} />;
-  if (props.section === "prospects") return <Prospects data={data} onImport={props.onImport} busy={props.busy === "import"} />;
+  if (props.section === "prospects") return <Prospects data={data} onImport={props.onImport} busy={props.busy === "import"} onRefresh={props.onRefresh} />;
   if (props.section === "campaigns") {
     return (
       <CampaignsView
@@ -582,21 +588,55 @@ function Overview({ data, onNavigate, onImport }: { data: DashboardData; onNavig
   );
 }
 
-function Prospects({ data, onImport, busy }: { data: DashboardData; onImport: () => void; busy: boolean }) {
-  const [guideOpen, setGuideOpen] = useState(false); const [historyLead, setHistoryLead] = useState<DashboardData["leads"][number] | null>(null);
-  return (<>
+const CRM_STAGES = ["new", "attempted", "connected", "qualified", "appointment_set", "nurturing", "won", "lost", "do_not_contact"] as const;
+
+function Prospects({ data, onImport, busy, onRefresh }: { data: DashboardData; onImport: () => void; busy: boolean; onRefresh: () => void }) {
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [historyLead, setHistoryLead] = useState<DashboardData["leads"][number] | null>(null);
+  const [selectedLead, setSelectedLead] = useState<DashboardData["leads"][number] | null>(data.leads[0] ?? null);
+  const [view, setView] = useState<"contacts" | "pipeline" | "tasks" | "companies">("contacts");
+  const [query, setQuery] = useState("");
+  const [saving, setSaving] = useState<string | null>(null);
+  const canWrite = data.viewer.permissions.includes("prospects:write");
+  const filtered = data.leads.filter((lead) => `${lead.firstName} ${lead.lastName} ${lead.company || ""} ${lead.title || ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const companies = Array.from(new Set(filtered.map((lead) => lead.company).filter(Boolean))).map((company) => ({ name: company as string, prospects: filtered.filter((lead) => lead.company === company) }));
+  const pipelineValue = data.leads.reduce((sum, lead) => sum + lead.dealValueCents, 0);
+
+  async function updateStage(lead: DashboardData["leads"][number], crmStage: string) {
+    setSaving(`stage:${lead.id}`);
+    const response = await fetch(`/api/prospects/${lead.id}/crm`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ crmStage }) });
+    setSaving(null); if (response.ok) onRefresh();
+  }
+  async function addTask(form: HTMLFormElement) {
+    setSaving("task:new"); const values = new FormData(form); const due = values.get("dueAt");
+    const response = await fetch("/api/crm/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ leadId: values.get("leadId"), title: values.get("title"), dueAt: due ? new Date(String(due)).getTime() : null }) });
+    setSaving(null); if (response.ok) { form.reset(); onRefresh(); }
+  }
+  async function toggleTask(id: string, completed: boolean) {
+    setSaving(`task:${id}`); const response = await fetch("/api/crm/tasks", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, status: completed ? "completed" : "open" }) });
+    setSaving(null); if (response.ok) onRefresh();
+  }
+
+  return <>
+    <section className="crm-summary-grid">
+      <article className="panel crm-summary"><span>New prospects</span><strong>{data.leads.filter((lead) => lead.crmStage === "new").length}</strong><small>Ready for first touch</small></article>
+      <article className="panel crm-summary"><span>Connected</span><strong>{data.leads.filter((lead) => ["connected", "qualified", "appointment_set"].includes(lead.crmStage)).length}</strong><small>Live conversations</small></article>
+      <article className="panel crm-summary"><span>Qualified</span><strong>{data.leads.filter((lead) => lead.crmStage === "qualified").length}</strong><small>Sales-ready prospects</small></article>
+      <article className="panel crm-summary"><span>Pipeline value</span><strong>{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(pipelineValue / 100)}</strong><small>Open tracked value</small></article>
+    </section>
     <section className="panel section-panel table-panel">
-      <div className="section-toolbar"><div><span className="panel-kicker">Consent-controlled list · {data.leads.length} of {data.workspace.plan.prospects.toLocaleString()} plan capacity shown</span><h2>{data.leads.length} recent prospects</h2></div><div className="toolbar-actions"><button className="button button-secondary" type="button" onClick={() => setGuideOpen(true)}>View format guide</button><a className="button button-secondary" href="/api/leads/template"><Icon name="download" size={17} />Download template</a><button className="button button-primary" type="button" onClick={onImport} disabled={busy}><Icon name="upload" size={17} />{busy ? "Importing…" : "Import Excel or CSV"}</button></div></div>
-      {!data.leads.length ? (
-        <div className="import-zone" onClick={onImport} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") onImport(); }}>
-          <div className="import-graphic"><Icon name="upload" size={27} /></div><h2>Bring in your prospect workbook</h2><p>Excel and CSV files are normalized, deduplicated, and held outside the dialer until consent and DNC evidence pass validation.</p><div className="template-fields"><span>Phone</span><span>Express-written consent</span><span>Consent timestamp + evidence</span><span>DNC checked date</span><span>IANA timezone</span></div>
-        </div>
-      ) : (
-        <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Prospect</th><th>Phone</th><th>Timezone</th><th>Consent</th><th>DNC check</th><th>Outreach history</th><th>Status</th></tr></thead><tbody>{data.leads.map((lead) => <tr key={lead.id}><td><strong>{lead.firstName} {lead.lastName}</strong><span>{[lead.title, lead.company].filter(Boolean).join(" · ") || "—"}</span></td><td>{lead.phoneE164}</td><td>{lead.timezone || "Missing"}</td><td>{humanize(lead.consentStatus)}</td><td>{lead.dncCheckedAt ? formatDate(lead.dncCheckedAt, { month: "short", day: "numeric", year: "numeric" }) : "Missing"}</td><td><button className="text-button" type="button" onClick={() => setHistoryLead(lead)}>{lead.outreachCount} attempt{lead.outreachCount === 1 ? "" : "s"}{lead.lastOutreachAt ? ` · ${formatDate(lead.lastOutreachAt, { month: "short", day: "numeric" })}` : ""}</button></td><td><StatusBadge value={lead.status} title={lead.blockReasons.map(humanize).join(", ")} /></td></tr>)}</tbody></table></div>
-      )}
-      <div className="policy-footnote"><Icon name="shield" size={17} /><span>An imported row is never treated as consent. The required evidence must already exist in the workbook.</span></div>
-    </section>{guideOpen ? <ImportGuideModal onClose={() => setGuideOpen(false)} /> : null}{historyLead ? <OutreachHistoryModal lead={historyLead} canWrite={data.viewer.permissions.includes("prospects:write")} onClose={() => setHistoryLead(null)} /> : null}</>
-  );
+      <div className="section-toolbar"><div><span className="panel-kicker">Dialer-connected CRM · {data.leads.length} of {data.workspace.plan.prospects.toLocaleString()} plan capacity</span><h2>Prospects, pipeline, tasks, and companies</h2></div><div className="toolbar-actions"><button className="button button-secondary" type="button" onClick={() => setGuideOpen(true)}>Import guide</button><button className="button button-primary" type="button" onClick={onImport} disabled={busy}><Icon name="upload" size={17}/>{busy ? "Importing…" : "Import Excel or CSV"}</button></div></div>
+      <div className="crm-controls"><div className="crm-tabs" role="tablist">{(["contacts", "pipeline", "tasks", "companies"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} type="button" onClick={() => setView(item)}>{humanize(item)}</button>)}</div><label className="crm-search"><span className="visually-hidden">Search CRM</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects or companies…"/></label></div>
+      {!data.leads.length ? <div className="import-zone" onClick={onImport} role="button" tabIndex={0}><div className="import-graphic"><Icon name="upload" size={27}/></div><h2>Bring in your prospect workbook</h2><p>Every imported prospect becomes a CRM record while consent and DNC controls still determine whether the dialer may call.</p></div> : null}
+      {data.leads.length && view === "contacts" ? <><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Prospect</th><th>CRM stage</th><th>Dialer eligibility</th><th>Last outreach</th><th>Next follow-up</th><th>Owner</th></tr></thead><tbody>{filtered.map((lead) => <tr key={lead.id} className={selectedLead?.id === lead.id ? "crm-selected-row" : ""} onClick={() => setSelectedLead(lead)}><td><strong>{lead.firstName} {lead.lastName}</strong><span>{[lead.title, lead.company].filter(Boolean).join(" · ") || "—"}</span></td><td><select className="crm-stage-select" aria-label={`CRM stage for ${lead.firstName} ${lead.lastName}`} value={lead.crmStage} disabled={!canWrite || saving === `stage:${lead.id}`} onClick={(event) => event.stopPropagation()} onChange={(event) => void updateStage(lead, event.target.value)}>{CRM_STAGES.map((stage) => <option value={stage} key={stage}>{humanize(stage)}</option>)}</select></td><td><StatusBadge value={lead.status} title={lead.blockReasons.map(humanize).join(", ")}/></td><td><button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); setHistoryLead(lead); }}>{lead.outreachCount} attempt{lead.outreachCount === 1 ? "" : "s"}{lead.lastOutreachAt ? ` · ${formatDate(lead.lastOutreachAt, { month: "short", day: "numeric" })}` : ""}</button></td><td>{lead.nextFollowUpAt ? formatDate(lead.nextFollowUpAt, { month: "short", day: "numeric", hour: "numeric" }) : "Not scheduled"}</td><td>{lead.createdByUserId === data.viewer.userId ? "You" : "Workspace"}</td></tr>)}</tbody></table></div>{selectedLead ? <div className="crm-record-strip"><div><span>Selected prospect</span><strong>{selectedLead.firstName} {selectedLead.lastName}</strong><small>{selectedLead.company || "Independent"}</small></div><div><span>Contact</span><strong>{selectedLead.phoneE164}</strong><small>{selectedLead.email || "No booking email"}</small></div><div><span>Compliance</span><strong>{humanize(selectedLead.consentStatus)}</strong><small>{selectedLead.dncCheckedAt ? `DNC checked ${formatDate(selectedLead.dncCheckedAt, { month: "short", day: "numeric" })}` : "DNC check missing"}</small></div><div><span>Next action</span><strong>{selectedLead.nextFollowUpAt ? formatDate(selectedLead.nextFollowUpAt, { month: "short", day: "numeric", hour: "numeric" }) : "Create a follow-up task"}</strong><button className="text-button" type="button" onClick={() => setHistoryLead(selectedLead)}>Open complete timeline</button></div></div> : null}</> : null}
+      {data.leads.length && view === "pipeline" ? <div className="crm-pipeline">{CRM_STAGES.slice(0, 7).map((stage) => { const stageLeads = filtered.filter((lead) => lead.crmStage === stage); return <section className="crm-column" key={stage}><header><span>{humanize(stage)}</span><strong>{stageLeads.length}</strong></header>{stageLeads.map((lead) => <button type="button" className="crm-deal-card" key={lead.id} onClick={() => { setSelectedLead(lead); setView("contacts"); }}><strong>{lead.firstName} {lead.lastName}</strong><span>{lead.company || "Independent"}</span><small>{lead.outreachCount} outreach attempt{lead.outreachCount === 1 ? "" : "s"}</small></button>)}{!stageLeads.length ? <p>No prospects</p> : null}</section>; })}</div> : null}
+      {data.leads.length && view === "tasks" ? <div className="crm-tasks"><form className="inline-form crm-task-form" onSubmit={(event) => { event.preventDefault(); void addTask(event.currentTarget); }}><select name="leadId" required defaultValue=""><option value="" disabled>Choose prospect</option>{data.leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.firstName} {lead.lastName}</option>)}</select><input name="title" placeholder="Follow-up task" required/><input name="dueAt" type="datetime-local"/><button className="button button-primary" disabled={!canWrite || saving === "task:new"}>{saving === "task:new" ? "Saving…" : "Add task"}</button></form><div className="crm-task-list">{data.crmTasks.length ? data.crmTasks.map((task) => { const lead = data.leads.find((item) => item.id === task.leadId); return <label className={`crm-task ${task.status === "completed" ? "done" : ""}`} key={task.id}><input type="checkbox" checked={task.status === "completed"} disabled={!canWrite || saving === `task:${task.id}`} onChange={(event) => void toggleTask(task.id, event.target.checked)}/><span><strong>{task.title}</strong><small>{lead ? `${lead.firstName} ${lead.lastName}` : "Prospect"} · {task.dueAt ? formatDate(task.dueAt, { month: "short", day: "numeric", hour: "numeric" }) : "No due date"}</small></span></label>; }) : <div className="focused-empty compact"><h2>No follow-up tasks</h2><p>Create the next action for a prospect above.</p></div>}</div></div> : null}
+      {data.leads.length && view === "companies" ? <div className="crm-company-grid">{companies.length ? companies.map((company) => <article className="crm-company" key={company.name}><div><span className="panel-kicker">Company</span><h3>{company.name}</h3></div><strong>{company.prospects.length}</strong><small>{company.prospects.filter((lead) => ["qualified", "appointment_set"].includes(lead.crmStage)).length} sales-ready</small></article>) : <div className="focused-empty compact"><h2>No company records</h2><p>Add company values during import to group prospects automatically.</p></div>}</div> : null}
+      <div className="policy-footnote"><Icon name="shield" size={17}/><span>CRM stage never overrides calling consent. Every attempt still passes the dialer’s consent, DNC, timezone, and plan-limit controls.</span></div>
+    </section>
+    {guideOpen ? <ImportGuideModal onClose={() => setGuideOpen(false)}/> : null}
+    {historyLead ? <OutreachHistoryModal lead={historyLead} canWrite={canWrite} onClose={() => setHistoryLead(null)}/> : null}
+  </>;
 }
 
 const IMPORT_FIELDS = [

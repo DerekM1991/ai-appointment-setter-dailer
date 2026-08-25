@@ -159,6 +159,14 @@ export const leads = sqliteTable(
     })
       .notNull()
       .default("blocked"),
+    crmStage: text("crm_stage", {
+      enum: ["new", "attempted", "connected", "qualified", "appointment_set", "nurturing", "won", "lost", "do_not_contact"],
+    })
+      .notNull()
+      .default("new"),
+    assignedToUserId: text("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
+    nextFollowUpAt: integer("next_follow_up_at"),
+    dealValueCents: integer("deal_value_cents").notNull().default(0),
     blockReasonsJson: text("block_reasons_json").notNull().default("[]"),
     notes: text("notes"),
     createdAt: integer("created_at").notNull(),
@@ -167,6 +175,7 @@ export const leads = sqliteTable(
   (table) => [
     uniqueIndex("leads_org_phone_unique").on(table.organizationId, table.phoneE164),
     index("leads_org_status_idx").on(table.organizationId, table.status),
+    index("leads_org_crm_stage_idx").on(table.organizationId, table.crmStage),
   ],
 );
 
@@ -281,6 +290,26 @@ export const prospectOutreachEvents = sqliteTable(
   (table) => [
     index("outreach_org_lead_idx").on(table.organizationId, table.leadId, table.occurredAt),
     index("outreach_call_idx").on(table.callId),
+  ],
+);
+
+export const crmTasks = sqliteTable(
+  "crm_tasks",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    leadId: text("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+    assignedToUserId: text("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdByUserId: text("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    dueAt: integer("due_at"),
+    status: text("status", { enum: ["open", "completed", "cancelled"] }).notNull().default("open"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("crm_tasks_org_status_due_idx").on(table.organizationId, table.status, table.dueAt),
+    index("crm_tasks_lead_idx").on(table.leadId),
   ],
 );
 
