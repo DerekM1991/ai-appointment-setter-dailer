@@ -26,7 +26,7 @@ type IconName =
 type NavItem = { id: string; label: string; icon: IconName };
 
 type DashboardData = {
-  viewer: { userId: string; displayName: string; email: string; role: string; permissions: string[] };
+  viewer: { userId: string; displayName: string; email: string; role: string; platformRole: "user" | "super_admin"; permissions: string[] };
   workspace: { id: string; name: string; planKey: string; plan: { name: string; priceMonthly: number; seats: number; prospects: number; campaigns: number; concurrentCalls: number; callsPerMonth: number; workspaceIntegrations: number }; subscriptionStatus: string; trialEndsAt: number | null; memberCount: number; stripeConfigured: boolean; hasBillingAccount: boolean; currentPeriodEnd: number | null; usage: { callsStarted: number; contactsImported: number; callMinutes: number; aiTurns: number } };
   metrics: { eligible: number; blocked: number; active: number; booked: number };
   readiness: Record<"twilio" | "openai" | "calendar" | "eligibleProspects" | "baseUrl", boolean>;
@@ -45,6 +45,8 @@ type DashboardData = {
     status: string;
     blockReasons: string[];
     createdAt: number;
+    outreachCount: number;
+    lastOutreachAt: number | null;
   }>;
   campaigns: Array<{
     id: string;
@@ -122,6 +124,7 @@ const systemNav: NavItem[] = [
   { id: "integrations", label: "Integrations", icon: "plug" },
   { id: "team", label: "Team & roles", icon: "prospects" },
   { id: "billing", label: "Billing & plans", icon: "settings" },
+  { id: "platform-admin", label: "Platform admin", icon: "shield" },
 ];
 
 const sectionTitles: Record<string, { eyebrow: string; title: string; subtitle: string }> = {
@@ -175,6 +178,11 @@ const sectionTitles: Record<string, { eyebrow: string; title: string; subtitle: 
     title: "Billing & plans",
     subtitle: "Choose limits that match your calling volume and team size.",
   },
+  "platform-admin": {
+    eyebrow: "Application administration",
+    title: "Platform admin",
+    subtitle: "Manage every customer workspace, plan, and account status.",
+  },
 };
 
 export default function DialerDashboard({
@@ -193,7 +201,7 @@ export default function DialerDashboard({
   const [campaignModal, setCampaignModal] = useState(false);
   const [complianceAttested, setComplianceAttested] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const navigation = useMemo(() => [...primaryNav, ...systemNav], []);
+  const navigation = useMemo(() => [...primaryNav, ...systemNav.filter((item) => item.id !== "platform-admin" || data?.viewer.platformRole === "super_admin")], [data?.viewer.platformRole]);
   const heading = sectionTitles[activeSection] ?? sectionTitles.overview;
   const activeLabel = navigation.find((item) => item.id === activeSection)?.label ?? "Overview";
 
@@ -391,7 +399,7 @@ export default function DialerDashboard({
             <NavButton key={item.id} item={item} active={activeSection === item.id} onClick={() => selectSection(item.id)} />
           ))}
           <div className="nav-label nav-label-spaced">System</div>
-          {systemNav.map((item) => (
+          {systemNav.filter((item) => item.id !== "platform-admin" || data?.viewer.platformRole === "super_admin").map((item) => (
             <NavButton key={item.id} item={item} active={activeSection === item.id} onClick={() => selectSection(item.id)} count={item.id === "compliance" ? data?.metrics.blocked : undefined} />
           ))}
         </nav>
@@ -407,7 +415,7 @@ export default function DialerDashboard({
             <span className="profile-avatar">{initials}</span>
             <span className="profile-copy">
               <strong>{displayName}</strong>
-              <span title={userEmail}>{humanize(data?.viewer.role || "member")} · {data?.workspace.plan.name || "Trial"}</span>
+              <span title={userEmail}>{data?.viewer.platformRole === "super_admin" ? "Platform Super Admin" : humanize(data?.viewer.role || "member")} · {data?.workspace.plan.name || "Trial"}</span>
             </span>
             <Icon name="settings" size={17} />
           </div>
@@ -512,6 +520,7 @@ function DashboardSection(props: {
   if (props.section === "compliance") return <ComplianceView data={data} />;
   if (props.section === "integrations") return <IntegrationsView data={data} onDisconnectOutlook={props.onDisconnectOutlook} busy={props.busy} onRefresh={props.onRefresh} />;
   if (props.section === "team") return <TeamView data={data} />;
+  if (props.section === "platform-admin") return <PlatformAdminView data={data} />;
   return <BillingView data={data} />;
 }
 
@@ -566,20 +575,28 @@ function Overview({ data, onNavigate, onImport }: { data: DashboardData; onNavig
 }
 
 function Prospects({ data, onImport, busy }: { data: DashboardData; onImport: () => void; busy: boolean }) {
-  return (
+  const [guideOpen, setGuideOpen] = useState(false); const [historyLead, setHistoryLead] = useState<DashboardData["leads"][number] | null>(null);
+  return (<>
     <section className="panel section-panel table-panel">
-      <div className="section-toolbar"><div><span className="panel-kicker">Consent-controlled list</span><h2>{data.leads.length} recent prospects</h2></div><div className="toolbar-actions"><a className="button button-secondary" href="/api/leads/template"><Icon name="download" size={17} />Template</a><button className="button button-primary" type="button" onClick={onImport} disabled={busy}><Icon name="upload" size={17} />{busy ? "Importing…" : "Import Excel or CSV"}</button></div></div>
+      <div className="section-toolbar"><div><span className="panel-kicker">Consent-controlled list · {data.leads.length} of {data.workspace.plan.prospects.toLocaleString()} plan capacity shown</span><h2>{data.leads.length} recent prospects</h2></div><div className="toolbar-actions"><button className="button button-secondary" type="button" onClick={() => setGuideOpen(true)}>View format guide</button><a className="button button-secondary" href="/api/leads/template"><Icon name="download" size={17} />Download template</a><button className="button button-primary" type="button" onClick={onImport} disabled={busy}><Icon name="upload" size={17} />{busy ? "Importing…" : "Import Excel or CSV"}</button></div></div>
       {!data.leads.length ? (
         <div className="import-zone" onClick={onImport} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") onImport(); }}>
           <div className="import-graphic"><Icon name="upload" size={27} /></div><h2>Bring in your prospect workbook</h2><p>Excel and CSV files are normalized, deduplicated, and held outside the dialer until consent and DNC evidence pass validation.</p><div className="template-fields"><span>Phone</span><span>Express-written consent</span><span>Consent timestamp + evidence</span><span>DNC checked date</span><span>IANA timezone</span></div>
         </div>
       ) : (
-        <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Prospect</th><th>Phone</th><th>Timezone</th><th>Consent</th><th>DNC check</th><th>Status</th></tr></thead><tbody>{data.leads.map((lead) => <tr key={lead.id}><td><strong>{lead.firstName} {lead.lastName}</strong><span>{[lead.title, lead.company].filter(Boolean).join(" · ") || "—"}</span></td><td>{lead.phoneE164}</td><td>{lead.timezone || "Missing"}</td><td>{humanize(lead.consentStatus)}</td><td>{lead.dncCheckedAt ? formatDate(lead.dncCheckedAt, { month: "short", day: "numeric", year: "numeric" }) : "Missing"}</td><td><StatusBadge value={lead.status} title={lead.blockReasons.map(humanize).join(", ")} /></td></tr>)}</tbody></table></div>
+        <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Prospect</th><th>Phone</th><th>Timezone</th><th>Consent</th><th>DNC check</th><th>Outreach history</th><th>Status</th></tr></thead><tbody>{data.leads.map((lead) => <tr key={lead.id}><td><strong>{lead.firstName} {lead.lastName}</strong><span>{[lead.title, lead.company].filter(Boolean).join(" · ") || "—"}</span></td><td>{lead.phoneE164}</td><td>{lead.timezone || "Missing"}</td><td>{humanize(lead.consentStatus)}</td><td>{lead.dncCheckedAt ? formatDate(lead.dncCheckedAt, { month: "short", day: "numeric", year: "numeric" }) : "Missing"}</td><td><button className="text-button" type="button" onClick={() => setHistoryLead(lead)}>{lead.outreachCount} attempt{lead.outreachCount === 1 ? "" : "s"}{lead.lastOutreachAt ? ` · ${formatDate(lead.lastOutreachAt, { month: "short", day: "numeric" })}` : ""}</button></td><td><StatusBadge value={lead.status} title={lead.blockReasons.map(humanize).join(", ")} /></td></tr>)}</tbody></table></div>
       )}
       <div className="policy-footnote"><Icon name="shield" size={17} /><span>An imported row is never treated as consent. The required evidence must already exist in the workbook.</span></div>
-    </section>
+    </section>{guideOpen ? <ImportGuideModal onClose={() => setGuideOpen(false)} /> : null}{historyLead ? <OutreachHistoryModal lead={historyLead} canWrite={data.viewer.permissions.includes("prospects:write")} onClose={() => setHistoryLead(null)} /> : null}</>
   );
 }
+
+const IMPORT_FIELDS = [
+  ["first_name / last_name", "Recommended", "Prospect name."], ["company / title", "Optional", "Employer and role."], ["phone", "Required", "E.164 (+13375551234) or a 10-digit US number."], ["email", "To book", "Required before sending a calendar invitation."], ["timezone", "Required to call", "IANA value such as America/Chicago."], ["consent_status", "Required to call", "Use express_written; vague yes values are blocked."], ["consent_timestamp", "Required to call", "Date/time consent was captured."], ["consent_source", "Required to call", "Form, campaign, agreement, or other capture source."], ["consent_evidence", "Required to call", "Durable evidence ID or reference."], ["dnc_checked_at", "Required to call", "DNC screening date; must be within 31 days."], ["internal_dnc", "Required", "false to allow evaluation; true always blocks."], ["notes", "Optional", "Internal context for the team."],
+];
+function ImportGuideModal({ onClose }: { onClose: () => void }) { return <div className="modal-backdrop"><section className="modal modal-wide" role="dialog" aria-modal="true"><div className="modal-header"><div><span className="panel-kicker">Excel and CSV format</span><h2>Prospect import guide</h2></div><button className="icon-button" onClick={onClose}><Icon name="close" /></button></div><p className="muted-copy">Use one prospect per row. Keep the exact header names below in row 1. Download the template, open it in Excel, fill the rows, save as .xlsx or .csv, and upload it here.</p><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Column</th><th>Requirement</th><th>What to enter</th></tr></thead><tbody>{IMPORT_FIELDS.map(([field, requirement, description]) => <tr key={field}><td><strong>{field}</strong></td><td>{requirement}</td><td>{description}</td></tr>)}</tbody></table></div><div className="modal-actions"><a className="button button-secondary" href="/api/leads/template"><Icon name="download" />Download blank template</a><button className="button button-primary" onClick={onClose}>Got it</button></div></section></div>; }
+
+function OutreachHistoryModal({ lead, canWrite, onClose }: { lead: DashboardData["leads"][number]; canWrite: boolean; onClose: () => void }) { const [events, setEvents] = useState<Array<{ id: string; channel: string; status: string; outcome: string | null; notes: string | null; actor: string; occurredAt: number }>>([]); const [error, setError] = useState(""); const load = useCallback(async () => { const response = await fetch(`/api/prospects/${lead.id}/outreach`); const payload = await response.json() as { events?: typeof events; error?: string }; if (response.ok) setEvents(payload.events || []); else setError(payload.error || "Could not load history."); }, [lead.id]); useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]); async function add(form: HTMLFormElement) { const values = new FormData(form); const response = await fetch(`/api/prospects/${lead.id}/outreach`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: values.get("channel"), outcome: values.get("outcome"), notes: values.get("notes") }) }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not add entry."); form.reset(); void load(); } return <div className="modal-backdrop"><section className="modal modal-wide" role="dialog" aria-modal="true"><div className="modal-header"><div><span className="panel-kicker">Permanent contact ledger</span><h2>{lead.firstName} {lead.lastName}</h2></div><button className="icon-button" onClick={onClose}><Icon name="close" /></button></div>{canWrite ? <form className="inline-form outreach-form" onSubmit={(event) => { event.preventDefault(); void add(event.currentTarget); }}><select name="channel" defaultValue="phone"><option value="phone">Phone</option><option value="email">Email</option><option value="sms">SMS</option><option value="manual">Other</option></select><input name="outcome" placeholder="Outcome (left voicemail)" required /><input name="notes" placeholder="Optional notes" /><button className="button button-primary">Add entry</button></form> : null}{error ? <p className="legal-note">{error}</p> : null}<div className="data-table-wrap"><table className="data-table"><thead><tr><th>When</th><th>Channel</th><th>Status / outcome</th><th>Recorded by</th><th>Notes</th></tr></thead><tbody>{events.length ? events.map((event) => <tr key={event.id}><td>{formatDate(event.occurredAt, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</td><td>{humanize(event.channel)}</td><td><strong>{humanize(event.outcome || event.status)}</strong></td><td>{event.actor}</td><td>{event.notes || "—"}</td></tr>) : <tr><td colSpan={5}>No outreach has been recorded yet.</td></tr>}</tbody></table></div></section></div>; }
 
 function CampaignsView({ data, busy, attested, setAttested, onCreate, onLaunch }: { data: DashboardData; busy: string | null; attested: boolean; setAttested: (value: boolean) => void; onCreate: () => void; onLaunch: (id: string) => void }) {
   const allReady = Object.values(data.readiness).every(Boolean);
@@ -650,18 +667,29 @@ function CredentialModal({ provider, saving, onClose, onSubmit }: { provider: "t
 }
 
 function TeamView({ data }: { data: DashboardData }) {
-  const [members, setMembers] = useState<Array<{ userId: string; displayName: string; email: string; role: string; status: string }>>([]); const [error, setError] = useState(""); const canManage = data.viewer.permissions.includes("members:manage");
-  const load = useCallback(async () => { if (!canManage) return; const response = await fetch("/api/team"); const payload = await response.json() as { members?: typeof members; error?: string }; if (response.ok) setMembers(payload.members || []); else setError(payload.error || "Could not load team."); }, [canManage]);
+  const [members, setMembers] = useState<Array<{ userId: string; displayName: string; email: string; role: string; status: string }>>([]); const [roles, setRoles] = useState<string[]>([]); const [error, setError] = useState(""); const canManage = data.viewer.permissions.includes("members:manage");
+  const load = useCallback(async () => { if (!canManage) return; const response = await fetch("/api/team"); const payload = await response.json() as { members?: typeof members; manageableRoles?: string[]; error?: string }; if (response.ok) { setMembers(payload.members || []); setRoles(payload.manageableRoles || []); } else setError(payload.error || "Could not load team."); }, [canManage]);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
   async function invite(form: HTMLFormElement) { const values = new FormData(form); const response = await fetch("/api/team", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: values.get("email"), role: values.get("role") }) }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not add member."); form.reset(); setError(""); void load(); }
-  if (!canManage) return <section className="panel focused-empty"><Icon name="shield" size={30} /><h2>Owner or admin access required</h2><p>Your role can use the workspace but cannot manage membership.</p></section>;
-  return <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">{data.workspace.memberCount} of {data.workspace.plan.seats} seats</span><h2>{data.workspace.name}</h2></div></div><form className="inline-form" onSubmit={(event) => { event.preventDefault(); void invite(event.currentTarget); }}><input name="email" type="email" required placeholder="teammate@company.com" /><select name="role" defaultValue="member"><option value="admin">Admin</option><option value="manager">Manager</option><option value="member">Member</option><option value="viewer">Viewer</option></select><button className="button button-primary">Add member</button></form>{error ? <p className="legal-note">{error}</p> : null}<div className="data-table-wrap"><table className="data-table"><thead><tr><th>Member</th><th>Role</th><th>Status</th></tr></thead><tbody>{members.map((member) => <tr key={member.userId}><td><strong>{member.displayName}</strong><span>{member.email}</span></td><td>{humanize(member.role)}</td><td><StatusBadge value={member.status} /></td></tr>)}</tbody></table></div></section>;
+  async function update(userId: string, body: Record<string, unknown>) { const response = await fetch("/api/team", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, ...body }) }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not update member."); setError(""); void load(); }
+  async function remove(userId: string) { if (!window.confirm("Remove this person from the workspace? Their historical activity remains in the audit log.")) return; const response = await fetch(`/api/team?userId=${encodeURIComponent(userId)}`, { method: "DELETE" }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not remove member."); void load(); }
+  if (!canManage) return <section className="panel focused-empty"><Icon name="shield" size={30} /><h2>Team management access required</h2><p>Owners and admins manage their lower roles; managers can manage members and viewers.</p></section>;
+  return <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">Signed in as {data.viewer.platformRole === "super_admin" ? "Platform Super Admin" : humanize(data.viewer.role)} · {data.workspace.memberCount} of {data.workspace.plan.seats} seats</span><h2>{data.workspace.name}</h2></div></div><div className="role-explainer"><span><strong>Owner</strong> Billing, admins, ownership</span><span><strong>Admin</strong> Managers and team operations</span><span><strong>Manager</strong> Members and viewers</span><span><strong>Member</strong> Campaign preparation</span><span><strong>Viewer</strong> Read only</span></div><form className="inline-form" onSubmit={(event) => { event.preventDefault(); void invite(event.currentTarget); }}><input name="email" type="email" required placeholder="teammate@company.com" /><select name="role" defaultValue={roles.includes("member") ? "member" : roles[0]}>{roles.map((role) => <option value={role} key={role}>{humanize(role)}</option>)}</select><button className="button button-primary">Add member</button></form>{error ? <p className="legal-note">{error}</p> : null}<div className="data-table-wrap"><table className="data-table"><thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>{members.map((member) => { const isSelf = member.userId === data.viewer.userId; const manageable = !isSelf && member.role !== "owner" && roles.some((role) => role === member.role || roleRank(role) >= roleRank(member.role)); return <tr key={member.userId}><td><strong>{member.displayName}{isSelf ? " (you)" : ""}</strong><span>{member.email}</span></td><td>{manageable ? <select value={member.role} onChange={(event) => void update(member.userId, { role: event.target.value })}>{roles.map((role) => <option value={role} key={role}>{humanize(role)}</option>)}</select> : humanize(member.role)}</td><td><StatusBadge value={member.status} /></td><td><div className="table-actions">{manageable ? <><button className="text-button" onClick={() => void update(member.userId, { status: member.status === "active" ? "disabled" : "active" })}>{member.status === "active" ? "Disable" : "Reactivate"}</button><button className="text-button danger" onClick={() => void remove(member.userId)}>Remove</button>{data.viewer.role === "owner" ? <button className="text-button" onClick={() => { if (window.confirm("Transfer workspace ownership? You will become an admin.")) void update(member.userId, { transferOwnership: true }); }}>Make owner</button> : null}</> : <span>Protected</span>}</div></td></tr>; })}</tbody></table></div></section>;
 }
 
 function BillingView({ data }: { data: DashboardData }) {
-  const plans = [{ key: "starter", name: "Starter", price: 19.99, detail: "250 calls · 1 seat · 2 concurrent" }, { key: "growth", name: "Growth", price: 49.99, detail: "2,000 calls · 5 seats · 10 concurrent" }, { key: "pro", name: "Pro", price: 99.99, detail: "10,000 calls · 20 seats · 20 concurrent" }];
+  const plans = [{ key: "starter", name: "Starter", price: 19.99, detail: "1,000 prospects · 3 campaigns · 250 calls/month · 1 seat · 2 concurrent · 3 integrations · 30-day audit" }, { key: "growth", name: "Growth", price: 49.99, detail: "5,000 prospects · 20 campaigns · 2,000 calls/month · 5 seats · 10 concurrent · 10 integrations · 180-day audit" }, { key: "pro", name: "Pro", price: 99.99, detail: "25,000 prospects · 100 campaigns · 10,000 calls/month · 20 seats · 20 concurrent · 50 integrations · 365-day audit" }];
   async function billing(path: "checkout" | "portal", plan?: string) { const response = await fetch(`/api/billing/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(plan ? { plan } : {}) }); const payload = await response.json() as { url?: string; error?: string }; if (!response.ok || !payload.url) return window.alert(payload.error || "Billing is not available."); window.location.href = payload.url; }
   return <><section className="panel section-panel"><div className="panel-header"><div><span className="panel-kicker">Current subscription</span><h2>{data.workspace.plan.name} · {humanize(data.workspace.subscriptionStatus)}</h2></div>{data.workspace.hasBillingAccount ? <button className="button button-secondary" onClick={() => void billing("portal")}>Manage billing</button> : null}</div><div className="campaign-details"><DetailRow label="Calls this month" value={`${data.workspace.usage.callsStarted.toLocaleString()} / ${data.workspace.plan.callsPerMonth.toLocaleString()}`} /><DetailRow label="Team seats" value={`${data.workspace.memberCount} / ${data.workspace.plan.seats}`} /><DetailRow label="Concurrent calls" value={String(data.workspace.plan.concurrentCalls)} /></div></section><section className="integration-card-grid">{plans.map((plan) => <article className="panel integration-card" key={plan.key}><span className="panel-kicker">Monthly</span><h2>{plan.name}</h2><div className="metric-value">${plan.price}</div><p>{plan.detail}</p><button className="button button-primary" disabled={!data.viewer.permissions.includes("billing:manage") || !data.workspace.stripeConfigured || data.workspace.planKey === plan.key} onClick={() => void billing("checkout", plan.key)}>{data.workspace.planKey === plan.key ? "Current plan" : "Choose plan"}</button></article>)}</section>{!data.workspace.stripeConfigured ? <section className="legal-note"><Icon name="shield" /><p>Stripe price IDs and webhook signing must be configured by the deployer before paid checkout is enabled.</p></section> : null}</>;
+}
+
+function PlatformAdminView({ data }: { data: DashboardData }) {
+  const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string; status: string; planKey: string; subscriptionStatus: string; memberCount: number; callCount: number; createdAt: number }>>([]); const [error, setError] = useState("");
+  const load = useCallback(async () => { const response = await fetch("/api/admin/workspaces"); const payload = await response.json() as { workspaces?: typeof workspaces; error?: string }; if (response.ok) setWorkspaces(payload.workspaces || []); else setError(payload.error || "Could not load platform administration."); }, []);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  async function update(organizationId: string, body: Record<string, unknown>) { const response = await fetch("/api/admin/workspaces", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId, ...body }) }); const payload = await response.json() as { error?: string }; if (!response.ok) return setError(payload.error || "Could not update workspace."); setError(""); void load(); }
+  if (data.viewer.platformRole !== "super_admin") return <section className="panel focused-empty"><Icon name="shield" size={30} /><h2>Platform administrator access required</h2></section>;
+  return <section className="panel section-panel table-panel"><div className="section-toolbar"><div><span className="panel-kicker">Application-wide control · Signed in as Platform Super Admin</span><h2>{workspaces.length} customer workspaces</h2></div></div>{error ? <p className="legal-note">{error}</p> : null}<div className="data-table-wrap"><table className="data-table"><thead><tr><th>Workspace</th><th>Plan</th><th>Subscription</th><th>Usage</th><th>Status</th><th>Actions</th></tr></thead><tbody>{workspaces.map((workspace) => <tr key={workspace.id}><td><strong>{workspace.name}</strong><span>Created {formatDate(workspace.createdAt, { month: "short", day: "numeric", year: "numeric" })}</span></td><td><select value={workspace.planKey} onChange={(event) => void update(workspace.id, { planKey: event.target.value })}><option value="trial">Trial</option><option value="starter">Starter</option><option value="growth">Growth</option><option value="pro">Pro</option></select></td><td><select value={workspace.subscriptionStatus} onChange={(event) => void update(workspace.id, { subscriptionStatus: event.target.value })}><option value="trialing">Trialing</option><option value="active">Active</option><option value="past_due">Past due</option><option value="canceled">Canceled</option><option value="incomplete">Incomplete</option></select></td><td>{workspace.memberCount} members · {workspace.callCount} calls</td><td><StatusBadge value={workspace.status} /></td><td><button className={`text-button ${workspace.status === "active" ? "danger" : ""}`} onClick={() => { if (workspace.status !== "active" || window.confirm("Suspend this customer workspace? Non-platform users will lose access.")) void update(workspace.id, { status: workspace.status === "active" ? "suspended" : "active" }); }}>{workspace.status === "active" ? "Suspend" : "Reactivate"}</button></td></tr>)}</tbody></table></div></section>;
 }
 
 function CampaignModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (form: HTMLFormElement) => void }) {
@@ -724,6 +752,7 @@ function humanize(value: string): string { return value.replace(/[_-]+/g, " ").r
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function dayPart(): string { const hour = new Date().getHours(); return hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"; }
 function firstName(value: string): string { return value.split(/[\s@]/)[0] || "there"; }
+function roleRank(value: string): number { return ({ viewer: 1, member: 2, manager: 3, admin: 4, owner: 5 } as Record<string, number>)[value] || 0; }
 function formatDuration(seconds: number | null): string { if (!seconds && seconds !== 0) return "—"; const minutes = Math.floor(seconds / 60); const rest = seconds % 60; return `${minutes}:${String(rest).padStart(2, "0")}`; }
 function formatDate(value: number, options: Intl.DateTimeFormatOptions): string { return new Intl.DateTimeFormat("en-US", options).format(new Date(value)); }
 

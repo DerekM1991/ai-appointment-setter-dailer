@@ -13,6 +13,7 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
+    platformRole: text("platform_role", { enum: ["user", "super_admin"] }).notNull().default("user"),
     status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
     lastSeenAt: integer("last_seen_at").notNull(),
     createdAt: integer("created_at").notNull(),
@@ -27,6 +28,7 @@ export const organizations = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
     planKey: text("plan_key", { enum: ["trial", "starter", "growth", "pro"] })
       .notNull()
       .default("trial"),
@@ -250,6 +252,30 @@ export const calls = sqliteTable(
     index("calls_org_status_idx").on(table.organizationId, table.status),
     index("calls_campaign_status_idx").on(table.campaignId, table.status),
     index("calls_lead_idx").on(table.leadId),
+  ],
+);
+
+export const prospectOutreachEvents = sqliteTable(
+  "prospect_outreach_events",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    leadId: text("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    callId: text("call_id").references(() => calls.id, { onDelete: "set null" }),
+    channel: text("channel", { enum: ["phone", "email", "sms", "manual"] }).notNull().default("phone"),
+    status: text("status").notNull().default("attempted"),
+    outcome: text("outcome"),
+    providerReference: text("provider_reference"),
+    notes: text("notes"),
+    actor: text("actor").notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("outreach_org_lead_idx").on(table.organizationId, table.leadId, table.occurredAt),
+    index("outreach_call_idx").on(table.callId),
   ],
 );
 

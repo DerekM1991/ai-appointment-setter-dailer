@@ -1,6 +1,6 @@
 import { and, count, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { campaignLeads, campaigns, calls, leads } from "@/db/schema";
+import { campaignLeads, campaigns, calls, leads, prospectOutreachEvents } from "@/db/schema";
 import { launchCampaignBatch } from "@/lib/campaign-runner";
 import { getRuntimeEnv } from "@/lib/env";
 import { validateTwilioRequest } from "@/lib/twilio";
@@ -40,6 +40,7 @@ export async function POST(request: Request) {
       updatedAt: now,
     })
     .where(eq(calls.id, callId));
+  await db.update(prospectOutreachEvents).set({ status, outcome: record.outcome || (status === "busy" || status === "no-answer" ? status.replace("-", "_") : terminal.has(status) ? status : null), providerReference: form.get("CallSid") || record.twilioCallSid, updatedAt: now }).where(eq(prospectOutreachEvents.callId, callId));
 
   if (terminal.has(status) && record.campaignId) {
     const [lead] = await db

@@ -17,6 +17,9 @@ test("build emits a deployable worker and appointment-setting control room", asy
   assert.match(dashboard, /Team & roles/);
   assert.match(dashboard, /Billing & plans/);
   assert.match(dashboard, /Connect Google/);
+  assert.match(dashboard, /Platform Super Admin/);
+  assert.match(dashboard, /Prospect import guide/);
+  assert.match(dashboard, /Permanent contact ledger/);
 });
 
 test("worker owns the signed ConversationRelay WebSocket route", async () => {

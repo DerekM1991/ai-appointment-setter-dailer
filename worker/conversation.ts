@@ -8,6 +8,7 @@ import {
   campaigns,
   calls,
   leads,
+  prospectOutreachEvents,
 } from "@/db/schema";
 import { writeAuditEvent } from "@/lib/audit";
 import {
@@ -432,7 +433,9 @@ async function enforceOptOut(session: Session, source: string) {
       updatedAt: now,
     })
     .where(eq(calls.id, session.callId));
+  await session.db.update(prospectOutreachEvents).set({ outcome: "opted_out", status: "completed", updatedAt: now }).where(eq(prospectOutreachEvents.callId, session.callId));
   await writeAuditEvent(session.db, {
+    organizationId: session.organizationId,
     actor: "system:agent",
     eventType: "prospect_opted_out",
     entityType: "lead",
@@ -446,10 +449,12 @@ async function enforceOptOut(session: Session, source: string) {
 }
 
 async function finishCall(session: Session, outcome: string, summary: string) {
+  const now = Date.now();
   await session.db
     .update(calls)
-    .set({ outcome, summary, updatedAt: Date.now() })
+    .set({ outcome, summary, updatedAt: now })
     .where(eq(calls.id, session.callId));
+  await session.db.update(prospectOutreachEvents).set({ outcome, status: "completed", notes: summary.slice(0, 500), updatedAt: now }).where(eq(prospectOutreachEvents.callId, session.callId));
 }
 
 async function appendAssistant(session: Session, reply: string) {

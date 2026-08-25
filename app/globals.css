@@ -1629,6 +1629,14 @@ blockquote {
 .landing-plans article { border: 1px solid var(--line); background: var(--surface); padding: 28px; border-radius: 14px; }
 .landing-plans strong { font-size: 2rem; }
 @media (max-width: 760px) { .landing-plans { grid-template-columns: 1fr; } .landing-hero > div { align-items: flex-start; flex-direction: column; } }
+.modal-wide { width: min(960px, calc(100vw - 32px)); }
+.role-explainer { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 18px 0 4px; }
+.role-explainer span { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); font-size: .78rem; }
+.role-explainer strong { color: var(--text); font-size: .84rem; }
+.table-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.text-button.danger { color: #ff8b8b; }
+.outreach-form { grid-template-columns: 130px minmax(180px, .7fr) minmax(220px, 1fr) auto; }
+@media (max-width: 900px) { .role-explainer { grid-template-columns: repeat(2, 1fr); } .outreach-form { grid-template-columns: 1fr; } }
 
 .form-grid {
   display: grid;

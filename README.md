@@ -8,6 +8,9 @@ A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. 
 
 - Authenticated control-room dashboard with live campaign, call, appointment, integration, and audit views
 - Isolated workspaces, per-user identities, owner/admin/manager/member/viewer roles, and plan entitlements
+- Platform Super Admin console for the configured application owner to manage all customer workspaces, plans, subscription states, and suspensions
+- Full team lifecycle controls: add, change role, disable, reactivate, remove, and transfer workspace ownership, with role hierarchy and audit logging
+- Permanent per-prospect outreach ledger populated automatically by calls and manually for phone, email, SMS, or other contact
 - Stripe subscription checkout, customer portal, signed webhooks, and Starter ($19.99), Growth ($49.99), and Pro ($99.99) tiers
 - Self-service encrypted integrations for Twilio, OpenAI, Outlook, Google Calendar, and Cal.com credentials
 - Campaign-level seller, product, agent identity, product brief, objective, concurrency, and appointment settings
@@ -82,7 +85,7 @@ Never commit real credentials. Generate the encryption key with `openssl rand -b
 
 ## Accounts, roles, and plans
 
-Every authenticated user belongs to an isolated workspace. Owners control billing and all access; admins manage integrations and members; managers can import, configure, and launch campaigns; members can import and prepare campaigns; viewers have read-only access. Team seats, stored prospects, campaign count, concurrent calls, monthly calls, integration count, and audit retention are plan entitlements enforced by server routes—not browser-only checks.
+Every authenticated user belongs to an isolated workspace. Owners control billing, admins, ownership, and all lower roles; admins manage managers, members, and viewers; managers can manage members and viewers while operating campaigns; members can import and prepare campaigns; viewers have read-only access. The email configured as `APP_OWNER_EMAIL` is also promoted to Platform Super Admin and receives a separate application-wide administration console. Team seats, stored prospects, campaign count, concurrent calls, monthly calls, integration count, and audit retention remain plan entitlements enforced by server routes—not browser-only checks.
 
 | Plan | Monthly | Seats | Prospects | Campaigns | Concurrent calls | Calls/month |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -193,6 +196,8 @@ npm test
 | `/api/google/connect` and `/callback` | Google Calendar delegated OAuth |
 | `/api/integrations` | List, verify, save, and remove encrypted user connections |
 | `/api/team` | Role- and seat-limited workspace membership |
+| `/api/admin/workspaces` | Platform Super Admin workspace controls |
+| `/api/prospects/:id/outreach` | Permanent prospect contact history and manual entries |
 | `/api/billing/*` | Stripe Checkout and billing portal |
 | `/api/stripe/webhook` | Signed subscription state updates |
 | `/api/twilio/voice` | Signed TwiML for each outbound call |

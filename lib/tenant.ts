@@ -21,7 +21,7 @@ export type Permission =
 const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   owner: new Set(["dashboard:read", "prospects:write", "campaigns:write", "calls:launch", "integrations:personal", "integrations:workspace", "members:manage", "billing:manage", "audit:read"]),
   admin: new Set(["dashboard:read", "prospects:write", "campaigns:write", "calls:launch", "integrations:personal", "integrations:workspace", "members:manage", "audit:read"]),
-  manager: new Set(["dashboard:read", "prospects:write", "campaigns:write", "calls:launch", "integrations:personal", "audit:read"]),
+  manager: new Set(["dashboard:read", "prospects:write", "campaigns:write", "calls:launch", "integrations:personal", "members:manage", "audit:read"]),
   member: new Set(["dashboard:read", "prospects:write", "campaigns:write", "integrations:personal"]),
   viewer: new Set(["dashboard:read"]),
 };
@@ -33,6 +33,7 @@ export type TenantContext = {
   organizationId: string;
   organizationName: string;
   role: Role;
+  platformRole: "user" | "super_admin";
   planKey: PlanKey;
   plan: PlanDefinition;
   subscriptionStatus: string;
@@ -50,13 +51,16 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
       email,
       displayName: identity.displayName.slice(0, 120),
       status: "active",
+      platformRole: getRuntimeEnv().APP_OWNER_EMAIL?.trim().toLowerCase() === email ? "super_admin" : "user",
       lastSeenAt: now,
       createdAt: now,
       updatedAt: now,
     }).onConflictDoNothing({ target: users.email });
     [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   } else {
-    await db.update(users).set({ displayName: identity.displayName.slice(0, 120), lastSeenAt: now, updatedAt: now }).where(eq(users.id, user.id));
+    const platformRole = getRuntimeEnv().APP_OWNER_EMAIL?.trim().toLowerCase() === email ? "super_admin" : user.platformRole;
+    await db.update(users).set({ displayName: identity.displayName.slice(0, 120), platformRole, lastSeenAt: now, updatedAt: now }).where(eq(users.id, user.id));
+    user = { ...user, platformRole };
   }
   if (!user || user.status !== "active") throw new Error("This user account is not active.");
 
@@ -69,6 +73,7 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
       planKey: organizations.planKey,
       subscriptionStatus: organizations.subscriptionStatus,
       trialEndsAt: organizations.trialEndsAt,
+      organizationStatus: organizations.status,
     })
     .from(memberships)
     .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
@@ -105,7 +110,8 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
         organizationName: organizations.name,
         planKey: organizations.planKey,
         subscriptionStatus: organizations.subscriptionStatus,
-        trialEndsAt: organizations.trialEndsAt,
+      trialEndsAt: organizations.trialEndsAt,
+      organizationStatus: organizations.status,
       })
       .from(memberships)
       .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
@@ -113,6 +119,7 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
       .limit(1);
   }
   if (!membership) throw new Error("Could not provision a workspace.");
+  if (membership.organizationStatus !== "active" && user.platformRole !== "super_admin") throw new Error("This workspace is suspended.");
   return {
     userId: user.id,
     email,
@@ -120,6 +127,7 @@ export async function ensureTenantContext(db: Db, identity: ChatGPTUser): Promis
     organizationId: membership.organizationId,
     organizationName: membership.organizationName,
     role: membership.role as Role,
+    platformRole: user.platformRole,
     planKey: membership.planKey as PlanKey,
     plan: planFor(membership.planKey),
     subscriptionStatus: membership.subscriptionStatus,

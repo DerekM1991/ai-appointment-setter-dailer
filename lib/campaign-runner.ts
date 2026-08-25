@@ -1,6 +1,6 @@
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { getDb } from "@/db";
-import { campaignLeads, campaigns, calls, leads, organizations } from "@/db/schema";
+import { campaignLeads, campaigns, calls, leads, organizations, prospectOutreachEvents } from "@/db/schema";
 import {
   evaluateLeadCompliance,
   isWithinCallingWindow,
@@ -146,6 +146,8 @@ export async function launchCampaignBatch(input: {
       createdAt: now,
       updatedAt: now,
     });
+    const outreachId = crypto.randomUUID();
+    await input.db.insert(prospectOutreachEvents).values({ id: outreachId, organizationId: campaign.organizationId, leadId: lead.leadId, campaignId: campaign.id, callId, channel: "phone", status: "attempted", actor: input.actor, occurredAt: now, createdAt: now, updatedAt: now });
     await input.db
       .update(campaignLeads)
       .set({ status: "calling" })
@@ -176,6 +178,7 @@ export async function launchCampaignBatch(input: {
           updatedAt: Date.now(),
         })
         .where(eq(calls.id, callId));
+      await input.db.update(prospectOutreachEvents).set({ status: "submitted", providerReference: twilioCall.sid, updatedAt: Date.now() }).where(eq(prospectOutreachEvents.id, outreachId));
       launched += 1;
       await incrementUsage(input.db, campaign.organizationId, "callsStarted");
     } catch (error) {
@@ -188,6 +191,7 @@ export async function launchCampaignBatch(input: {
           updatedAt: Date.now(),
         })
         .where(eq(calls.id, callId));
+      await input.db.update(prospectOutreachEvents).set({ status: "failed", outcome: "provider_error", notes: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), updatedAt: Date.now() }).where(eq(prospectOutreachEvents.id, outreachId));
       await input.db
         .update(campaignLeads)
         .set({ status: "completed" })
