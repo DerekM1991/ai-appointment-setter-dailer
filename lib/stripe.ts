@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { organizations } from "@/db/schema";
 import type { RuntimeEnv } from "./env";
-import type { PlanKey } from "./plans";
+import { planFor, type PlanKey } from "./plans";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -17,6 +17,7 @@ export async function createSubscriptionCheckout(input: {
 }): Promise<string> {
   const secret = required(input.runtime.STRIPE_SECRET_KEY, "STRIPE_SECRET_KEY");
   const price = priceFor(input.runtime, input.plan);
+  await validateStripePrice(secret, price, input.plan);
   const [organization] = await input.db.select().from(organizations).where(eq(organizations.id, input.organizationId)).limit(1);
   if (!organization) throw new Error("Workspace not found.");
   let customerId = organization.stripeCustomerId;
@@ -127,6 +128,24 @@ async function stripeRequest<T>(secret: string, path: string, values: Record<str
   const payload = (await response.json()) as T & { error?: { message?: string } };
   if (!response.ok) throw new Error(payload.error?.message || `Stripe request failed (${response.status}).`);
   return payload;
+}
+
+async function stripeGet<T>(secret: string, path: string): Promise<T> {
+  const response = await fetch(`https://api.stripe.com${path}`, {
+    headers: { authorization: `Bearer ${secret}` },
+  });
+  const payload = (await response.json()) as T & { error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message || `Stripe request failed (${response.status}).`);
+  return payload;
+}
+
+async function validateStripePrice(secret: string, priceId: string, plan: Exclude<PlanKey, "trial">): Promise<void> {
+  const price = await stripeGet<{ active?: boolean; currency?: string; unit_amount?: number | null; recurring?: { interval?: string } | null }>(secret, `/v1/prices/${encodeURIComponent(priceId)}`);
+  const definition = planFor(plan);
+  const expectedCents = Math.round(definition.priceMonthly * 100);
+  if (!price.active || price.currency !== "usd" || price.unit_amount !== expectedCents || price.recurring?.interval !== "month") {
+    throw new Error(`${definition.name} checkout is temporarily unavailable because its Stripe Price must be an active monthly USD price for $${definition.priceMonthly.toFixed(2)}.`);
+  }
 }
 
 function priceFor(runtime: RuntimeEnv, plan: Exclude<PlanKey, "trial">): string {

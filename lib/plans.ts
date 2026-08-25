@@ -29,7 +29,7 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
   starter: {
     key: "starter",
     name: "Starter",
-    priceMonthly: 19.99,
+    priceMonthly: 49,
     seats: 1,
     prospects: 1_000,
     campaigns: 3,
@@ -41,7 +41,7 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
   growth: {
     key: "growth",
     name: "Growth",
-    priceMonthly: 49.99,
+    priceMonthly: 149,
     seats: 5,
     prospects: 5_000,
     campaigns: 20,
@@ -53,7 +53,7 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
   pro: {
     key: "pro",
     name: "Pro",
-    priceMonthly: 99.99,
+    priceMonthly: 399,
     seats: 20,
     prospects: 25_000,
     campaigns: 100,

@@ -7,9 +7,8 @@ import {
 } from "./compliance";
 import { normalizedBaseUrl, type RuntimeEnv } from "./env";
 import { getCalendarStatus } from "./calendar";
-import { createTwilioCall } from "./twilio";
+import { createProviderCall } from "./call-provider";
 import { writeAuditEvent } from "./audit";
-import { resolveOpenAICredentials, resolveTwilioCredentials } from "./integrations";
 import { planFor } from "./plans";
 import { incrementUsage, usageValue } from "./usage";
 import { MAX_AI_CALL_SECONDS, resolveCallingLimits } from "./calling-limits";
@@ -17,6 +16,7 @@ import { MAX_AI_CALL_SECONDS, resolveCallingLimits } from "./calling-limits";
 type Db = ReturnType<typeof getDb>;
 
 const ACTIVE_CALL_STATUSES = [
+  "creating",
   "queued",
   "initiated",
   "ringing",
@@ -45,11 +45,8 @@ export async function launchCampaignBatch(input: {
   const plan = planFor(organization?.planKey);
   const callsUsed = await usageValue(input.db, campaign.organizationId, "callsStarted");
   if (callsUsed >= plan.callsPerMonth) throw new Error(`${plan.name} has reached its ${plan.callsPerMonth.toLocaleString()} call monthly limit.`);
-  const twilio = await resolveTwilioCredentials(input.db, input.runtime, campaign.organizationId);
-  const limits = await resolveCallingLimits(input.db, input.runtime, campaign.organizationId, plan);
-  const openai = await resolveOpenAICredentials(input.db, input.runtime, campaign.organizationId);
-  const resolvedRuntime = { ...input.runtime, TWILIO_ACCOUNT_SID: twilio.accountSid, TWILIO_AUTH_TOKEN: twilio.authToken, TWILIO_FROM_NUMBER: twilio.fromNumber, OPENAI_API_KEY: openai.apiKey, OPENAI_MODEL: openai.model };
-  assertProductionReady(resolvedRuntime);
+  const limits = await resolveCallingLimits(input.db, input.runtime, campaign.organizationId, plan, campaign.telephonyProvider, campaign.aiProvider);
+  if (!input.runtime.APP_ENCRYPTION_KEY) throw new Error("APP_ENCRYPTION_KEY is not configured.");
   const calendar = await getCalendarStatus(input.db, campaign.organizationId, campaign.createdByUserId);
   if (!calendar.connected) throw new Error("The campaign owner must connect Outlook or Google Calendar before calling.");
 
@@ -58,7 +55,7 @@ export async function launchCampaignBatch(input: {
     .from(calls)
     .where(
       and(
-        eq(calls.campaignId, campaign.id),
+        eq(calls.organizationId, campaign.organizationId),
         inArray(calls.status, ACTIVE_CALL_STATUSES),
       ),
     );
@@ -74,6 +71,9 @@ export async function launchCampaignBatch(input: {
       leadId: leads.id,
       firstName: leads.firstName,
       lastName: leads.lastName,
+      company: leads.company,
+      title: leads.title,
+      email: leads.email,
       phoneE164: leads.phoneE164,
       timezone: leads.timezone,
       consentStatus: leads.consentStatus,
@@ -98,6 +98,7 @@ export async function launchCampaignBatch(input: {
   let launched = 0;
   let blocked = 0;
   let skippedOutsideWindow = 0;
+  let lastProviderSubmissionAt = 0;
   for (const lead of queued) {
     if (launched >= requested) break;
     const compliance = evaluateLeadCompliance({
@@ -144,6 +145,8 @@ export async function launchCampaignBatch(input: {
       campaignId: campaign.id,
       leadId: lead.leadId,
       status: "creating",
+      telephonyProvider: campaign.telephonyProvider,
+      aiProvider: campaign.aiProvider,
       createdAt: now,
       updatedAt: now,
     });
@@ -164,23 +167,50 @@ export async function launchCampaignBatch(input: {
       .where(eq(leads.id, lead.leadId));
 
     try {
-      const voiceUrl = `${baseUrl}/api/twilio/voice?callId=${encodeURIComponent(callId)}`;
-      const statusCallbackUrl = `${baseUrl}/api/twilio/status?callId=${encodeURIComponent(callId)}`;
-      const twilioCall = await createTwilioCall(resolvedRuntime, {
+      const minimumSpacingMs = Math.ceil(1_000 / limits.effectiveCps);
+      const waitMs = lastProviderSubmissionAt ? Math.max(0, minimumSpacingMs - (Date.now() - lastProviderSubmissionAt)) : 0;
+      if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastProviderSubmissionAt = Date.now();
+      const providerCall = await createProviderCall({
+        db: input.db,
+        runtime: input.runtime,
+        organizationId: campaign.organizationId,
+        telephonyProvider: campaign.telephonyProvider,
+        aiProvider: campaign.aiProvider,
+        callId,
         to: lead.phoneE164,
-        voiceUrl,
-        statusCallbackUrl,
+        baseUrl,
         timeLimitSeconds: MAX_AI_CALL_SECONDS,
+        context: {
+          callId,
+          lead: {
+            firstName: lead.firstName,
+            lastName: lead.lastName,
+            company: lead.company,
+            title: lead.title,
+            email: lead.email,
+            timezone: lead.timezone || "America/Chicago",
+          },
+          campaign: {
+            sellerName: campaign.sellerName,
+            productName: campaign.productName,
+            agentName: campaign.agentName,
+            productSummary: campaign.productSummary,
+            objective: campaign.objective,
+            meetingDurationMinutes: campaign.meetingDurationMinutes,
+          },
+        },
       });
       await input.db
         .update(calls)
         .set({
-          twilioCallSid: twilioCall.sid,
-          status: twilioCall.status,
+          twilioCallSid: providerCall.twilioCallSid,
+          providerCallId: providerCall.providerCallId,
+          status: providerCall.status,
           updatedAt: Date.now(),
         })
         .where(eq(calls.id, callId));
-      await input.db.update(prospectOutreachEvents).set({ status: "submitted", providerReference: twilioCall.sid, updatedAt: Date.now() }).where(eq(prospectOutreachEvents.id, outreachId));
+      await input.db.update(prospectOutreachEvents).set({ status: "submitted", providerReference: providerCall.providerCallId, updatedAt: Date.now() }).where(eq(prospectOutreachEvents.id, outreachId));
       launched += 1;
       await incrementUsage(input.db, campaign.organizationId, "callsStarted");
     } catch (error) {
@@ -225,17 +255,4 @@ export async function launchCampaignBatch(input: {
     });
   }
   return { launched, blocked, skippedOutsideWindow };
-}
-
-function assertProductionReady(runtime: RuntimeEnv) {
-  const missing = [
-    ["TWILIO_ACCOUNT_SID", runtime.TWILIO_ACCOUNT_SID],
-    ["TWILIO_AUTH_TOKEN", runtime.TWILIO_AUTH_TOKEN],
-    ["TWILIO_FROM_NUMBER", runtime.TWILIO_FROM_NUMBER],
-    ["OPENAI_API_KEY", runtime.OPENAI_API_KEY],
-    ["APP_ENCRYPTION_KEY", runtime.APP_ENCRYPTION_KEY],
-  ]
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-  if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}.`);
 }
