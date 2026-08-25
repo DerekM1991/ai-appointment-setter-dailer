@@ -4,7 +4,6 @@ import { campaignLeads, campaigns, calls, leads, organizations, prospectOutreach
 import {
   evaluateLeadCompliance,
   isWithinCallingWindow,
-  MAX_CONCURRENT_CALLS,
 } from "./compliance";
 import { normalizedBaseUrl, type RuntimeEnv } from "./env";
 import { getCalendarStatus } from "./calendar";
@@ -13,6 +12,7 @@ import { writeAuditEvent } from "./audit";
 import { resolveOpenAICredentials, resolveTwilioCredentials } from "./integrations";
 import { planFor } from "./plans";
 import { incrementUsage, usageValue } from "./usage";
+import { MAX_AI_CALL_SECONDS, resolveCallingLimits } from "./calling-limits";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -46,6 +46,7 @@ export async function launchCampaignBatch(input: {
   const callsUsed = await usageValue(input.db, campaign.organizationId, "callsStarted");
   if (callsUsed >= plan.callsPerMonth) throw new Error(`${plan.name} has reached its ${plan.callsPerMonth.toLocaleString()} call monthly limit.`);
   const twilio = await resolveTwilioCredentials(input.db, input.runtime, campaign.organizationId);
+  const limits = await resolveCallingLimits(input.db, input.runtime, campaign.organizationId, plan);
   const openai = await resolveOpenAICredentials(input.db, input.runtime, campaign.organizationId);
   const resolvedRuntime = { ...input.runtime, TWILIO_ACCOUNT_SID: twilio.accountSid, TWILIO_AUTH_TOKEN: twilio.authToken, TWILIO_FROM_NUMBER: twilio.fromNumber, OPENAI_API_KEY: openai.apiKey, OPENAI_MODEL: openai.model };
   assertProductionReady(resolvedRuntime);
@@ -61,7 +62,7 @@ export async function launchCampaignBatch(input: {
         inArray(calls.status, ACTIVE_CALL_STATUSES),
       ),
     );
-  const concurrency = Math.min(MAX_CONCURRENT_CALLS, plan.concurrentCalls, Math.max(1, campaign.maxConcurrent));
+  const concurrency = limits.effectiveConcurrent;
   const openSlots = Math.max(0, concurrency - Number(active?.value ?? 0));
   const remainingCalls = Math.max(0, plan.callsPerMonth - callsUsed);
   const requested = Math.min(remainingCalls, input.limitOverride ? Math.min(openSlots, input.limitOverride) : openSlots);
@@ -169,6 +170,7 @@ export async function launchCampaignBatch(input: {
         to: lead.phoneE164,
         voiceUrl,
         statusCallbackUrl,
+        timeLimitSeconds: MAX_AI_CALL_SECONDS,
       });
       await input.db
         .update(calls)

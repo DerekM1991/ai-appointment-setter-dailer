@@ -2,7 +2,9 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { campaignLeads, campaigns, leads } from "@/db/schema";
 import { getAuthorizedApiUser, errorResponse } from "@/lib/api-auth";
-import { MAX_CONCURRENT_CALLS } from "@/lib/compliance";
+import { getRuntimeEnv } from "@/lib/env";
+import { resolveCallingLimits } from "@/lib/calling-limits";
+import { normalizeCampaignObjective } from "@/lib/campaign-objectives";
 import { writeAuditEvent } from "@/lib/audit";
 import { verifySameOrigin } from "@/lib/security";
 import { hasPermission, permissionDenied } from "@/lib/tenant";
@@ -30,8 +32,6 @@ export async function POST(request: Request) {
       agentName?: string;
       productSummary?: string;
       objective?: string;
-      maxConcurrent?: number;
-      callsPerSecond?: number;
       meetingDurationMinutes?: number;
     };
     const name = payload.name?.trim();
@@ -47,6 +47,10 @@ export async function POST(request: Request) {
       throw new Error("Enter a factual product brief between 40 and 2,000 characters.");
     }
     const db = getDb();
+    const limits = await resolveCallingLimits(db, getRuntimeEnv(), auth.organizationId, auth.plan).catch(() => ({
+      effectiveConcurrent: 1,
+      effectiveCps: 1,
+    }));
     const [campaignCount] = await db.select({ value: count() }).from(campaigns).where(eq(campaigns.organizationId, auth.organizationId));
     if (Number(campaignCount?.value ?? 0) >= auth.plan.campaigns) throw new Error(`${auth.plan.name} supports ${auth.plan.campaigns} campaigns.`);
     const eligible = await db
@@ -64,13 +68,10 @@ export async function POST(request: Request) {
       productName,
       agentName,
       productSummary,
-      objective: payload.objective?.trim() || "Book a discovery call",
+      objective: normalizeCampaignObjective(payload.objective),
       status: "draft",
-      maxConcurrent: Math.min(
-        Math.min(MAX_CONCURRENT_CALLS, auth.plan.concurrentCalls),
-        Math.max(1, Number(payload.maxConcurrent) || 20),
-      ),
-      callsPerSecond: Math.min(5, Math.max(1, Number(payload.callsPerSecond) || 1)),
+      maxConcurrent: limits.effectiveConcurrent,
+      callsPerSecond: limits.effectiveCps,
       meetingDurationMinutes: [15, 30, 45, 60].includes(
         Number(payload.meetingDurationMinutes),
       )

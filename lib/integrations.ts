@@ -6,7 +6,7 @@ import type { RuntimeEnv } from "./env";
 
 type Db = ReturnType<typeof getDb>;
 
-export type TwilioCredentials = { accountSid: string; authToken: string; fromNumber: string };
+export type TwilioCredentials = { accountSid: string; authToken: string; fromNumber: string; callsPerSecond: number; maxConcurrentCalls: number };
 export type OpenAICredentials = { apiKey: string; model: string };
 
 export async function listVisibleIntegrations(db: Db, organizationId: string, userId: string) {
@@ -79,12 +79,14 @@ export async function deleteIntegration(db: Db, organizationId: string, id: stri
 }
 
 export async function resolveTwilioCredentials(db: Db, runtime: RuntimeEnv, organizationId: string): Promise<TwilioCredentials> {
-  const config = await defaultConfig<TwilioCredentials>(db, runtime, organizationId, "twilio");
-  if (config) return config;
+  const config = await defaultConfig<Record<string, string>>(db, runtime, organizationId, "twilio");
+  if (config) return { accountSid: config.accountSid, authToken: config.authToken, fromNumber: config.fromNumber, callsPerSecond: boundedNumber(config.callsPerSecond, 1, 5), maxConcurrentCalls: boundedNumber(config.maxConcurrentCalls, 1, 20) };
   return {
     accountSid: required(runtime.TWILIO_ACCOUNT_SID, "TWILIO_ACCOUNT_SID"),
     authToken: required(runtime.TWILIO_AUTH_TOKEN, "TWILIO_AUTH_TOKEN"),
     fromNumber: required(runtime.TWILIO_FROM_NUMBER, "TWILIO_FROM_NUMBER"),
+    callsPerSecond: boundedNumber(runtime.TWILIO_CALLS_PER_SECOND, 1, 5),
+    maxConcurrentCalls: boundedNumber(runtime.TWILIO_MAX_CONCURRENT_CALLS, 1, 20),
   };
 }
 
@@ -111,7 +113,7 @@ function normalizeConfig(provider: "twilio" | "openai" | "calcom", config: Recor
     if (!/^AC[a-fA-F0-9]{32}$/.test(accountSid || "")) throw new Error("Enter a valid Twilio Account SID.");
     if (!authToken || authToken.length < 20) throw new Error("Enter a valid Twilio auth token.");
     if (!/^\+[1-9]\d{7,14}$/.test(fromNumber || "")) throw new Error("Enter a valid E.164 Twilio number.");
-    return { accountSid, authToken, fromNumber };
+    return { accountSid, authToken, fromNumber, callsPerSecond: String(boundedNumber(config.callsPerSecond, 1, 5)), maxConcurrentCalls: String(boundedNumber(config.maxConcurrentCalls, 1, 20)) };
   }
   if (provider === "openai") {
     const apiKey = config.apiKey?.trim();
@@ -147,4 +149,9 @@ function required(value: string | undefined, name: string): string {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`${name} is not configured.`);
   return normalized;
+}
+
+function boundedNumber(value: string | number | undefined, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, Math.floor(parsed))) : minimum;
 }

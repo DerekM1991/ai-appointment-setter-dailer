@@ -8,6 +8,8 @@ export type RuntimeEnv = {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_FROM_NUMBER?: string;
+  TWILIO_CALLS_PER_SECOND?: string;
+  TWILIO_MAX_CONCURRENT_CALLS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   MICROSOFT_CLIENT_ID?: string;

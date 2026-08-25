@@ -4,6 +4,7 @@ export type TwilioCallInput = {
   to: string;
   voiceUrl: string;
   statusCallbackUrl: string;
+  timeLimitSeconds?: number;
 };
 
 export async function createTwilioCall(
@@ -21,6 +22,7 @@ export async function createTwilioCall(
     StatusCallback: input.statusCallbackUrl,
     StatusCallbackMethod: "POST",
     StatusCallbackEvent: "initiated ringing answered completed",
+    TimeLimit: String(input.timeLimitSeconds ?? 900),
   });
   const response = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Calls.json`,
