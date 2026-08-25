@@ -89,7 +89,7 @@ export const integrationConnections = sqliteTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     ownerUserId: text("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
     provider: text("provider", {
-      enum: ["twilio", "openai", "microsoft", "google", "calcom"],
+      enum: ["twilio", "telnyx", "openai", "elevenlabs", "gemini", "microsoft", "google", "calcom"],
     }).notNull(),
     category: text("category", { enum: ["telephony", "ai", "calendar"] }).notNull(),
     scope: text("scope", { enum: ["workspace", "personal"] }).notNull(),
@@ -191,6 +191,12 @@ export const campaigns = sqliteTable(
     agentName: text("agent_name").notNull().default("Alex"),
     productSummary: text("product_summary").notNull(),
     objective: text("objective").notNull().default("Book a discovery call"),
+    telephonyProvider: text("telephony_provider", { enum: ["twilio", "telnyx"] })
+      .notNull()
+      .default("twilio"),
+    aiProvider: text("ai_provider", { enum: ["openai", "elevenlabs", "gemini"] })
+      .notNull()
+      .default("openai"),
     status: text("status", {
       enum: ["draft", "running", "paused", "completed"],
     })
@@ -240,6 +246,13 @@ export const calls = sqliteTable(
     id: text("id").primaryKey(),
     organizationId: text("organization_id").notNull().default("legacy"),
     twilioCallSid: text("twilio_call_sid"),
+    telephonyProvider: text("telephony_provider", { enum: ["twilio", "telnyx"] })
+      .notNull()
+      .default("twilio"),
+    aiProvider: text("ai_provider", { enum: ["openai", "elevenlabs", "gemini"] })
+      .notNull()
+      .default("openai"),
+    providerCallId: text("provider_call_id"),
     campaignId: text("campaign_id").references(() => campaigns.id, {
       onDelete: "set null",
     }),
@@ -263,6 +276,7 @@ export const calls = sqliteTable(
   },
   (table) => [
     uniqueIndex("calls_twilio_sid_unique").on(table.twilioCallSid),
+    uniqueIndex("calls_provider_id_unique").on(table.telephonyProvider, table.providerCallId),
     index("calls_org_status_idx").on(table.organizationId, table.status),
     index("calls_campaign_status_idx").on(table.campaignId, table.status),
     index("calls_lead_idx").on(table.leadId),
@@ -340,6 +354,7 @@ export const appointments = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
+    uniqueIndex("appointments_call_unique").on(table.callId),
     uniqueIndex("appointments_graph_event_unique").on(table.graphEventId),
     index("appointments_org_start_idx").on(table.organizationId, table.startAt),
   ],
