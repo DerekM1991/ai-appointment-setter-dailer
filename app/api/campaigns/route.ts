@@ -8,6 +8,7 @@ import { normalizeCampaignObjective } from "@/lib/campaign-objectives";
 import { writeAuditEvent } from "@/lib/audit";
 import { verifySameOrigin } from "@/lib/security";
 import { hasPermission, permissionDenied } from "@/lib/tenant";
+import { normalizeVoiceStack } from "@/lib/provider-stacks";
 
 export async function GET() {
   const auth = await getAuthorizedApiUser();
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
       productSummary?: string;
       objective?: string;
       meetingDurationMinutes?: number;
+      voiceStack?: string;
     };
     const name = payload.name?.trim();
     const sellerName = payload.sellerName?.trim();
@@ -47,7 +49,8 @@ export async function POST(request: Request) {
       throw new Error("Enter a factual product brief between 40 and 2,000 characters.");
     }
     const db = getDb();
-    const limits = await resolveCallingLimits(db, getRuntimeEnv(), auth.organizationId, auth.plan).catch(() => ({
+    const voiceStack = normalizeVoiceStack(payload.voiceStack);
+    const limits = await resolveCallingLimits(db, getRuntimeEnv(), auth.organizationId, auth.plan, voiceStack.telephonyProvider, voiceStack.aiProvider).catch(() => ({
       effectiveConcurrent: 1,
       effectiveCps: 1,
     }));
@@ -69,6 +72,8 @@ export async function POST(request: Request) {
       agentName,
       productSummary,
       objective: normalizeCampaignObjective(payload.objective),
+      telephonyProvider: voiceStack.telephonyProvider,
+      aiProvider: voiceStack.aiProvider,
       status: "draft",
       maxConcurrent: limits.effectiveConcurrent,
       callsPerSecond: limits.effectiveCps,
@@ -98,7 +103,7 @@ export async function POST(request: Request) {
       eventType: "campaign_created",
       entityType: "campaign",
       entityId: id,
-      details: { eligibleProspectsQueued: eligible.length },
+      details: { eligibleProspectsQueued: eligible.length, ...voiceStack },
     });
     return Response.json({ id, queued: eligible.length }, { status: 201 });
   } catch (error) {

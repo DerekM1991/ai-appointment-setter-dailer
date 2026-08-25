@@ -20,14 +20,14 @@ export async function POST(request: Request) {
   if (!auth.ok) return auth.response;
   try {
     const payload = (await request.json()) as { provider?: string; scope?: string; label?: string; config?: Record<string, string> };
-    if (payload.provider !== "twilio" && payload.provider !== "openai" && payload.provider !== "calcom") throw new Error("Choose a supported provider.");
+    if (!["twilio", "telnyx", "openai", "elevenlabs", "gemini", "calcom"].includes(payload.provider || "")) throw new Error("Choose a supported provider.");
     const scope = payload.provider === "calcom" && payload.scope === "personal" ? "personal" : "workspace";
     if (scope === "workspace" && !hasPermission(auth, "integrations:workspace")) return permissionDenied("integrations:workspace");
     if (scope === "personal" && !hasPermission(auth, "integrations:personal")) return permissionDenied("integrations:personal");
     const db = getDb();
     const [existing] = await db.select({ value: count() }).from(integrationConnections).where(eq(integrationConnections.organizationId, auth.organizationId));
     if (Number(existing?.value ?? 0) >= auth.plan.workspaceIntegrations) throw new Error(`${auth.plan.name} supports ${auth.plan.workspaceIntegrations} saved integrations.`);
-    const id = await saveCredentialIntegration({ db, runtime: getRuntimeEnv(), organizationId: auth.organizationId, userId: auth.userId, provider: payload.provider, scope, label: payload.label?.trim() || payload.provider, config: payload.config ?? {} });
+    const id = await saveCredentialIntegration({ db, runtime: getRuntimeEnv(), organizationId: auth.organizationId, userId: auth.userId, provider: payload.provider as "twilio" | "telnyx" | "openai" | "elevenlabs" | "gemini" | "calcom", scope, label: payload.label?.trim() || payload.provider || "Integration", config: payload.config ?? {} });
     return Response.json({ id }, { status: 201 });
   } catch (error) {
     return errorResponse(error, 400);

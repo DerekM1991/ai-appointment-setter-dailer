@@ -10,8 +10,22 @@ export type RuntimeEnv = {
   TWILIO_FROM_NUMBER?: string;
   TWILIO_CALLS_PER_SECOND?: string;
   TWILIO_MAX_CONCURRENT_CALLS?: string;
+  TELNYX_API_KEY?: string;
+  TELNYX_CONNECTION_ID?: string;
+  TELNYX_FROM_NUMBER?: string;
+  TELNYX_PUBLIC_KEY?: string;
+  TELNYX_CALLS_PER_SECOND?: string;
+  TELNYX_MAX_CONCURRENT_CALLS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
+  ELEVENLABS_API_KEY?: string;
+  ELEVENLABS_AGENT_ID?: string;
+  ELEVENLABS_PHONE_NUMBER_ID?: string;
+  ELEVENLABS_WEBHOOK_SECRET?: string;
+  ELEVENLABS_MAX_CONCURRENT_CALLS?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_LIVE_MODEL?: string;
+  GEMINI_LIVE_VOICE?: string;
   MICROSOFT_CLIENT_ID?: string;
   MICROSOFT_CLIENT_SECRET?: string;
   MICROSOFT_TENANT_ID?: string;
@@ -43,6 +57,19 @@ export function integrationReadiness(runtime: RuntimeEnv) {
         runtime.TWILIO_FROM_NUMBER,
     ),
     openai: Boolean(runtime.OPENAI_API_KEY),
+    telnyx: Boolean(
+      runtime.TELNYX_API_KEY &&
+        runtime.TELNYX_CONNECTION_ID &&
+        runtime.TELNYX_FROM_NUMBER &&
+        runtime.TELNYX_PUBLIC_KEY,
+    ),
+    elevenlabs: Boolean(
+      runtime.ELEVENLABS_API_KEY &&
+        runtime.ELEVENLABS_AGENT_ID &&
+        runtime.ELEVENLABS_PHONE_NUMBER_ID &&
+        runtime.ELEVENLABS_WEBHOOK_SECRET,
+    ),
+    gemini: Boolean(runtime.GEMINI_API_KEY),
     microsoft: Boolean(
       runtime.MICROSOFT_CLIENT_ID &&
         runtime.MICROSOFT_CLIENT_SECRET &&

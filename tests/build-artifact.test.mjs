@@ -47,7 +47,9 @@ test("SaaS routes enforce tenant, role, plan, and billing controls", async () =>
     readFile(new URL("../lib/security.ts", import.meta.url), "utf8"),
   ]);
   assert.match(tenant, /owner.*admin.*manager.*member.*viewer/s);
-  assert.match(plans, /priceMonthly: 19\.99/);
+  assert.match(plans, /priceMonthly: 49/);
+  assert.match(plans, /priceMonthly: 149/);
+  assert.match(plans, /priceMonthly: 399/);
   assert.match(plans, /concurrentCalls: 20/);
   assert.match(dashboard, /organizationId, auth\.organizationId/);
   assert.match(integrations, /APP_ENCRYPTION_KEY|saveCredentialIntegration/);
@@ -70,5 +72,24 @@ test("public website, account entry, and platform grants are present", async () 
   assert.match(dashboard, /Complimentary.*Discounted/s);
   assert.match(admin, /billingOverrideEndsAt/);
   assert.match(stripe, /discounts\[0\]\[coupon\]/);
+  assert.match(stripe, /validateStripePrice/);
   assert.match(migration, /billing_override_type/);
+});
+
+test("provider-neutral voice stacks and signed callbacks are present", async () => {
+  const [stacks, campaignRunner, telnyxRoute, elevenlabsRoute, geminiWorker, dashboard] = await Promise.all([
+    readFile(new URL("../lib/provider-stacks.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/campaign-runner.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/telnyx/events/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/elevenlabs/post-call/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/gemini-live.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/dialer-dashboard.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(stacks, /telnyx_elevenlabs/);
+  assert.match(stacks, /telnyx_gemini/);
+  assert.match(campaignRunner, /createProviderCall/);
+  assert.match(telnyxRoute, /validateTelnyxRequest/);
+  assert.match(elevenlabsRoute, /validateElevenLabsSignature/);
+  assert.match(geminiWorker, /BidiGenerateContent/);
+  assert.match(dashboard, /Voice provider stack/);
 });

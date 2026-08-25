@@ -2,6 +2,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { handleConversationUpgrade } from "./conversation";
+import { handleTelnyxMediaUpgrade } from "./gemini-live";
 
 interface Env {
   ASSETS: Fetcher;
@@ -12,8 +13,24 @@ interface Env {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_FROM_NUMBER?: string;
+  TWILIO_CALLS_PER_SECOND?: string;
+  TWILIO_MAX_CONCURRENT_CALLS?: string;
+  TELNYX_API_KEY?: string;
+  TELNYX_CONNECTION_ID?: string;
+  TELNYX_FROM_NUMBER?: string;
+  TELNYX_PUBLIC_KEY?: string;
+  TELNYX_CALLS_PER_SECOND?: string;
+  TELNYX_MAX_CONCURRENT_CALLS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
+  ELEVENLABS_API_KEY?: string;
+  ELEVENLABS_AGENT_ID?: string;
+  ELEVENLABS_PHONE_NUMBER_ID?: string;
+  ELEVENLABS_WEBHOOK_SECRET?: string;
+  ELEVENLABS_MAX_CONCURRENT_CALLS?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_LIVE_MODEL?: string;
+  GEMINI_LIVE_VOICE?: string;
   MICROSOFT_CLIENT_ID?: string;
   MICROSOFT_CLIENT_SECRET?: string;
   MICROSOFT_TENANT_ID?: string;
@@ -50,6 +67,10 @@ const worker = {
 
     if (url.pathname === "/api/twilio/conversation") {
       return handleConversationUpgrade(request, env);
+    }
+
+    if (url.pathname === "/api/telnyx/media") {
+      return handleTelnyxMediaUpgrade(request, env);
     }
 
     if (url.pathname === "/_vinext/image") {

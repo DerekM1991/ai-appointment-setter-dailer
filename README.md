@@ -1,8 +1,8 @@
 # AI Appointment Setter
 
-A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. It imports `.xlsx` or `.csv` workbooks, runs plan-limited Twilio voice sessions, uses an explicitly disclosed OpenAI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook or Google Calendar.
+A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. It imports `.xlsx` or `.csv` workbooks, runs provider- and plan-limited voice sessions, uses an explicitly disclosed AI agent to qualify interest, and creates confirmed appointments in Microsoft Outlook or Google Calendar.
 
-> This project intentionally does not provide an “upload and blast” mode. A prospect must have documented prior express written consent, current DNC-screening evidence, a valid phone number, and a known IANA timezone before the number can enter Twilio.
+> This project intentionally does not provide an “upload and blast” mode. A prospect must have documented prior express written consent, current DNC-screening evidence, a valid phone number, and a known IANA timezone before the number can enter a telephony provider.
 
 ## What is implemented
 
@@ -11,18 +11,20 @@ A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. 
 - Platform Super Admin console for the configured application owner to manage all customer workspaces, plans, subscription states, and suspensions
 - Full team lifecycle controls: add, change role, disable, reactivate, remove, and transfer workspace ownership, with role hierarchy and audit logging
 - Permanent per-prospect outreach ledger populated automatically by calls and manually for phone, email, SMS, or other contact
-- Stripe subscription checkout, customer portal, signed webhooks, and Starter ($19.99), Growth ($49.99), and Pro ($99.99) tiers
-- Self-service encrypted integrations for Twilio, OpenAI, Outlook, Google Calendar, and Cal.com credentials
-- Campaign-level seller, product, agent identity, product brief, objective, concurrency, and appointment settings
+- Stripe subscription checkout, customer portal, signed webhooks, and Starter ($49), Growth ($149), and Pro ($399) platform tiers
+- Self-service encrypted integrations for Twilio, Telnyx, OpenAI, ElevenLabs, Gemini, Outlook, Google Calendar, and Cal.com credentials
+- Campaign-level seller, product, agent identity, product brief, objective, voice-provider stack, concurrency, and appointment settings
 - Browser-side Excel/CSV parsing with normalized field aliases and server-side revalidation
 - D1 persistence for prospects, campaigns, queues, calls, transcripts, meetings, encrypted OAuth tokens, settings, and audit events
-- Maximum 20 active calls per campaign, with the provider’s Calls API queue handling account-level calls-per-second limits
+- Maximum 20 active calls per workspace, with effective capacity set to the lowest provider, AI-agent, global, and subscription allowance and submissions paced to the configured CPS
 - Twilio webhook HMAC validation and a signed ConversationRelay WebSocket endpoint
+- Telnyx Ed25519 webhook validation and a call-scoped bidirectional media token
+- ElevenLabs post-call HMAC validation and call-scoped server-tool authorization
 - Mandatory AI and sales-call disclosure in the Twilio greeting, before the model handles any speech
 - Structured OpenAI Responses API decisions with a deliberately small action surface
 - Independent server-side opt-out detection that immediately revokes consent and suppresses future calls
 - Outlook OAuth 2.0 connection, token refresh, calendar availability checks, and Outlook/Teams event creation
-- Explicit booking checks: exact offered slot, valid email, and affirmative confirmation are all required
+- Explicit booking checks: exact signed offered slot, valid email, and affirmative confirmation are all required
 - Checked Drizzle migration, responsive UI, social card, CI workflow, linting, type checks, and unit tests
 
 ## Architecture
@@ -31,15 +33,17 @@ A multi-tenant, compliance-gated SaaS workspace for consented outbound calling. 
 flowchart TD
   A["Excel or CSV"] --> B["Consent and DNC gate"]
   B --> C["D1 campaign queue"]
-  C --> D["Twilio calls: max 20 active"]
-  D --> E["ConversationRelay WebSocket"]
-  E --> F["OpenAI structured decision"]
-  F --> G["Outlook or Google calendar"]
-  G --> H["Confirmed invitation"]
-  E --> I["Transcript and audit log"]
+  C --> D["Twilio + OpenAI"]
+  C --> E["Telnyx + ElevenLabs"]
+  C --> F["Telnyx + Gemini Live"]
+  D --> G["Signed calendar tools"]
+  E --> G
+  F --> G
+  G --> H["Outlook or Google event"]
+  G --> I["Transcript and audit log"]
 ```
 
-Twilio performs telephony, speech recognition, and speech synthesis through ConversationRelay. The Worker receives prospect speech as text, asks OpenAI for a constrained structured decision, executes only approved server-side actions, and returns text for Twilio to speak. Audio is not sent through the app’s database.
+Twilio + OpenAI remains the default production stack. Telnyx + ElevenLabs is available as a beta SIP stack for higher-quality agent voice, while Telnyx + Gemini Live is a preview direct speech-to-speech path using bidirectional PCM media. All stacks share the same D1 queue, compliance checks, server-controlled calendar actions, outcome ledger, and plan caps. Audio is not written to the app’s database.
 
 ## Import workbook
 
@@ -66,19 +70,23 @@ Copy `.env.example` for local development, or set these as encrypted production 
 
 | Variable | Purpose |
 | --- | --- |
-| `APP_BASE_URL` | Canonical HTTPS URL used for Twilio callbacks and Microsoft OAuth. |
+| `APP_BASE_URL` | Canonical HTTPS URL used for provider callbacks and OAuth. |
 | `APP_OWNER_EMAIL` | Optional bootstrap owner for the legacy workspace. Other authenticated users self-provision isolated trials. |
-| `APP_ENCRYPTION_KEY` | Base64-encoded 32-byte AES-GCM key for Microsoft tokens and OAuth state. |
+| `APP_ENCRYPTION_KEY` | Base64-encoded 32-byte AES-GCM key for provider credentials, OAuth tokens, state, and call-scoped HMACs. |
 | `TWILIO_ACCOUNT_SID` | Twilio account identifier. |
 | `TWILIO_AUTH_TOKEN` | Twilio REST credential and webhook-signing secret. |
 | `TWILIO_FROM_NUMBER` | Voice-capable E.164 caller ID owned or verified in Twilio. |
+| `TELNYX_API_KEY` / `TELNYX_CONNECTION_ID` / `TELNYX_FROM_NUMBER` | Telnyx Voice API fallback credentials. |
+| `TELNYX_PUBLIC_KEY` | Telnyx Ed25519 webhook public key. |
 | `OPENAI_API_KEY` | Server-side OpenAI credential. |
 | `OPENAI_MODEL` | Defaults to `gpt-5.6-terra`; use `gpt-5.6-luna` for lower-cost high-volume workloads after evaluation. |
+| `ELEVENLABS_API_KEY` / `ELEVENLABS_AGENT_ID` / `ELEVENLABS_PHONE_NUMBER_ID` | ElevenLabs Agent and Telnyx SIP phone-number connection. |
+| `ELEVENLABS_WEBHOOK_SECRET` | HMAC secret for signed post-call transcript delivery. |
+| `GEMINI_API_KEY` / `GEMINI_LIVE_MODEL` / `GEMINI_LIVE_VOICE` | Gemini Live preview credentials and voice settings. |
 | `MICROSOFT_CLIENT_ID` | Microsoft Entra application ID. |
 | `MICROSOFT_CLIENT_SECRET` | Microsoft Entra client secret. |
 | `MICROSOFT_TENANT_ID` | Tenant ID or `common` for multi-tenant/personal Microsoft accounts. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth web application credentials. |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe server API and webhook signing credentials. |
 | `STRIPE_PRICE_STARTER` / `GROWTH` / `PRO` | Recurring Stripe Price IDs for the three paid tiers. |
 
 Never commit real credentials. Generate the encryption key with `openssl rand -base64 32` and keep it stable; changing it invalidates stored Outlook tokens.
@@ -89,11 +97,11 @@ Every authenticated user belongs to an isolated workspace. Owners control billin
 
 | Plan | Monthly | Seats | Prospects | Campaigns | Concurrent calls | Calls/month |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Starter | $19.99 | 1 | 1,000 | 3 | 2 | 250 |
-| Growth | $49.99 | 5 | 5,000 | 20 | 10 | 2,000 |
-| Pro | $99.99 | 20 | 25,000 | 100 | 20 | 10,000 |
+| Starter | $49 | 1 | 1,000 | 3 | 2 | 250 |
+| Growth | $149 | 5 | 5,000 | 20 | 10 | 2,000 |
+| Pro | $399 | 20 | 25,000 | 100 | 20 | 10,000 |
 
-New workspaces receive a 14-day trial. Stripe Checkout creates subscriptions and the signed webhook is the source of truth for subscription state. Configure `/api/stripe/webhook` in Stripe and subscribe to Checkout completion plus customer subscription create/update/delete events.
+New workspaces receive a 14-day trial. These are platform fees: customers connect and pay their own telephony and AI providers. A monthly call is counted only after the platform successfully submits it to the connected telephony provider. Stripe Checkout creates subscriptions and the signed webhook is the source of truth for subscription state. Create active monthly USD Prices for exactly $49, $149, and $399, set their IDs in the corresponding environment variables, configure `/api/stripe/webhook`, and subscribe to Checkout completion plus customer subscription create/update/delete events. Checkout rejects a mismatched Stripe Price before a customer can be charged.
 
 ## Google Calendar setup
 
@@ -135,11 +143,26 @@ The agent uses the Responses API with strict JSON Schema output. It can request 
 
 The system prompt requires AI identity, one question at a time, concise natural speech, no invented product or pricing claims, no pressure after disinterest, and no claim that a meeting is booked until Microsoft Graph succeeds. API requests set `store: false`.
 
+## Telnyx, ElevenLabs, and Gemini setup
+
+The dashboard verifies and encrypts each workspace’s own provider credentials. Campaigns can select only a supported pair:
+
+| Stack | Maturity | Required setup |
+| --- | --- | --- |
+| Twilio + OpenAI | Production | ConversationRelay onboarding, Twilio number, approved CPS/concurrency, and OpenAI key. |
+| Telnyx + ElevenLabs | Beta | Telnyx SIP trunk imported into ElevenLabs, ElevenLabs agent and phone-number IDs, server tools, and signed post-call webhook to `${APP_BASE_URL}/api/elevenlabs/post-call`. |
+| Telnyx + Gemini Live | Preview | Telnyx Voice API connection with media streaming and a Gemini Live-compatible API key/model. Telnyx call events post to `${APP_BASE_URL}/api/telnyx/events`; the app supplies the media WebSocket URL per call. |
+
+For ElevenLabs, configure agent server tools that POST `callId`, `tool`, `arguments`, and the call-scoped bearer token from the supplied dynamic variables to `${APP_BASE_URL}/api/agent-tools/elevenlabs`. The four allowed tool names are `list_slots`, `book_appointment`, `opt_out`, and `end_call`. A booking must return the exact `slotToken` received from `list_slots` plus the prospect’s verbatim confirmation.
+
+The beta and preview labels are deliberate: provider credentials are verified and the code paths are built and tested, but a consented end-to-end call must be completed in the target accounts before enabling customer traffic.
+
 ## Calling and compliance behavior
 
 - Strict local window: weekdays, 9:00 AM–4:30 PM in the prospect’s timezone
 - Maximum DNC-screen age: 31 days
-- Maximum active sessions per campaign: 20
+- Maximum active sessions per workspace: 20, further reduced by provider, AI-agent, and subscription limits
+- Outbound API submissions are paced to the configured provider CPS
 - Every lead is revalidated immediately before dialing
 - Any clear “do not call,” “remove me,” or equivalent phrase bypasses the model and triggers immediate internal suppression
 - Simple disinterest ends the pitch but is not silently treated as a permanent opt-out
@@ -168,7 +191,7 @@ npx tsc --noEmit
 npm test
 ```
 
-`npm test` performs a production build and runs compliance, workbook-mapping, Twilio-signature, and deployable-artifact tests.
+`npm test` performs a production build and runs compliance, workbook-mapping, Twilio, Telnyx, ElevenLabs, call-token, provider-stack, and deployable-artifact tests.
 
 ## Production checklist
 
@@ -178,6 +201,8 @@ npm test
 - [ ] Configure Google OAuth if Google Calendar will be offered.
 - [ ] Configure Stripe products/prices, signed webhook events, tax policy, receipts, and customer portal.
 - [ ] Complete Twilio ConversationRelay onboarding and confirm concurrency/CPS limits.
+- [ ] For Telnyx + ElevenLabs, configure the SIP trunk, four server tools, signed post-call webhook, and a consented beta call.
+- [ ] For Telnyx + Gemini Live, validate the preview model, PCM audio, interruption behavior, latency, and signed Telnyx events with a consented test call.
 - [ ] Verify caller identity, branded calling, and any registration required in target regions.
 - [ ] Run a consented test call to your own number and exercise interruption, no-interest, booking, and opt-out paths.
 - [ ] Review the product brief for factual accuracy before every campaign.
@@ -203,6 +228,10 @@ npm test
 | `/api/twilio/voice` | Signed TwiML for each outbound call |
 | `/api/twilio/status` | Signed lifecycle callback and queue drain |
 | `/api/twilio/conversation` | Signed ConversationRelay WebSocket |
+| `/api/telnyx/events` | Ed25519-verified Telnyx call lifecycle callback |
+| `/api/telnyx/media` | Call-token-protected Telnyx/Gemini bidirectional media WebSocket |
+| `/api/elevenlabs/post-call` | HMAC-verified ElevenLabs transcript and outcome sync |
+| `/api/agent-tools/elevenlabs` | Call-scoped ElevenLabs calendar, booking, opt-out, and end-call tools |
 
 ## Data handling
 
